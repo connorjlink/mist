@@ -21,10 +21,9 @@ pub extern "C" fn initialize() {
     });
 }
 
-// Estructura para mantener el estado del depurador
 #[derive(Default)]
 struct DebuggerState {
-    // Ejemplo: breakpoints, variables, etc.
+    // breakpoints, variables, etc.
     breakpoints: Vec<String>,
 }
 
