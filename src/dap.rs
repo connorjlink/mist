@@ -2,7 +2,7 @@ use serde::{Serialize, Deserialize};
 
 #[allow(non_snake_case)]
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct DapResponse<T> {
     #[serde(rename = "type")]
     msg_type: &'static str,
@@ -39,27 +39,27 @@ pub fn dap_error(seq: i64, command: &str, message: &str) -> String {
     return serde_json::to_string(&resp).unwrap();
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct BreakpointMode {
     pub mode: String,
     pub label: String,
-    pub appliesTo: Vec<String>,
+    pub applies_to: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct InitializeResponseBody {
-    pub supportsConfigurationDoneRequest: bool,
-    pub supportsFunctionBreakpoints: bool,
-    pub supportsModulesRequest: bool,
-    pub breakpointModes: Vec<BreakpointMode>,
+    pub supports_configuration_done_request: bool,
+    pub supports_function_breakpoints: bool,
+    pub supports_modules_request: bool,
+    pub breakpoint_modes: Vec<BreakpointMode>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Breakpoint {
     pub verified: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SetBreakpointsResponseBody {
     pub breakpoints: Vec<Breakpoint>,
 }

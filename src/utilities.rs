@@ -1,3 +1,5 @@
+use windows::core::*;
+
 pub fn to_pcstr(s: &str) -> PCSTR {
     let bytes = std::ffi::CString::new(s).expect("CString::new failed");
     return PCSTR(bytes.as_ptr() as *const u8);

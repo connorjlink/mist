@@ -1,14 +1,11 @@
-use std::ptr::null_mut;
+use std::{ptr::null_mut};
 use windows::{
-    core::*,
     Win32::{
         Foundation::*,
         System::{
-            Diagnostics::ToolHelp::*,
-            Threading::*,
-            ProcessStatus::*,
+            Diagnostics::{Debug::*, ToolHelp::*}, ProcessStatus::*, Threading::*
         },
-    },
+    }, core::*
 };
 
 use crate::utilities::*;
@@ -92,3 +89,24 @@ pub fn resolve_image_base(process: HANDLE) -> *mut std::ffi::c_void {
         return mod_info.lpBaseOfDll;
     }
 }
+
+/// Enable single-stepping on the target thread handle using the x86 trap flag
+pub fn enable_single_step(thread: HANDLE) -> bool {
+    unsafe {
+        let mut context = CONTEXT::default();
+        context.ContextFlags = CONTEXT_ALL_X86;
+
+        let get_result = GetThreadContext(thread, &mut context);
+        if get_result.is_err() {
+            return false;
+        }
+
+        context.EFlags |= 0x100;
+
+        let set_result = SetThreadContext(thread, &context);
+        ContinueDebugEvent(GetCurrentProcessId(), GetCurrentThreadId(), DBG_CONTINUE);
+        
+        return set_result.is_ok();
+    }
+}
+

@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use windows::{
     Win32::{
@@ -14,32 +16,29 @@ mod utilities;
 mod tooling;
 mod debugger;
 
-use debugger::*;
-use tooling::*;
 use utilities::*;
 
-pub struct ArgumentParser<'a> {
-    handlers: HashMap<&'a str, Box<dyn Fn(&str) + 'a>>,
+pub struct ArgumentParser {
+    handlers: HashMap<String, Box<dyn FnMut(&str)>>,
 }
 
-impl<'a> ArgumentParser<'a> {
+impl ArgumentParser {
     pub fn new() -> Self {
         return Self { 
             handlers: HashMap::new() 
         };
     }
 
-    pub fn on<F>(&mut self, name: &'a str, callback: F)
-        where F: Fn(&str) + 'a,
-    {
-        self.handlers.insert(name, Box::new(callback));
+    pub fn on<F>(&mut self, name: &str, callback: F)
+        where F: FnMut(&str) + 'static, {
+        self.handlers.insert(name.to_string(), Box::new(callback));
     }
 
-    pub fn parse(&self, args: &[String]) {
+    pub fn parse(&mut self, args: &[String]) {
         for arg in args {
             if let Some(stripped) = arg.strip_prefix("--") {
                 if let Some((name, value)) = stripped.split_once('=') {
-                    if let Some(handler) = self.handlers.get(name) {
+                    if let Some(handler) = self.handlers.get_mut(name) {
                         handler(value);
                     }
                 }
@@ -54,10 +53,13 @@ fn main() {
 
     let mut parser = ArgumentParser::new();
 
-    let mut target: Option<String> = None;
-    parse.on("target", |value| {
-        target = Some(value.to_string());
-        println!("Target: {}", value);
+    let target = Rc::new(RefCell::new(None));
+    parser.on("target", {
+        let target = Rc::clone(&target);
+        move |value| {
+            *target.borrow_mut() = Some(value.to_string());
+            println!("Target: {}", value);
+        }
     });
 
     parser.parse(&args);

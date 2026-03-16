@@ -59,8 +59,27 @@ async fn handle_dap_message(req: &Value, state: &SharedState) -> String {
     match command {
         "initialize" => {
             let body = InitializeResponseBody {
-                supportsConfigurationDoneRequest: true,
-                
+                supports_configuration_done_request: true,
+                supports_function_breakpoints: false,
+                supports_modules_request: false,
+                breakpoint_modes: vec![
+                    BreakpointMode {
+                        mode: "software".to_string(),
+                        label: "Software Breakpoint".to_string(),
+                        applies_to: vec![
+                            "source".to_string(), 
+                            "instruction".to_string()
+                        ],
+                    },
+                    BreakpointMode {
+                        mode: "hardware".to_string(),
+                        label: "Hardware Breakpoint".to_string(),
+                        applies_to: vec![
+                            "source".to_string(), 
+                            "instruction".to_string()
+                        ],
+                    },
+                ],
             };
             return dap_success(seq, "initialize", Some(body));
         }
