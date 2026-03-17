@@ -1,5 +1,8 @@
 use windows::core::*;
 
+// Mist utilities.rs
+// (c) Connor J. Link. All Rights Reserved.
+
 pub fn to_pcstr(s: &str) -> PCSTR {
     let bytes = std::ffi::CString::new(s).expect("CString::new failed");
     return PCSTR(bytes.as_ptr() as *const u8);

@@ -18,6 +18,9 @@ mod debugger;
 
 use utilities::*;
 
+// Mist main.rs
+// (c) Connor J. Link. All Rights Reserved.
+
 pub struct ArgumentParser {
     handlers: HashMap<String, Box<dyn FnMut(&str)>>,
 }
