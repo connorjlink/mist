@@ -185,3 +185,12 @@ pub fn await_get_thread_id() -> Option<u32> {
         }
     }
 }
+
+fn compare_pcwstr_case_insensitive(a: PCWSTR, b: PCWSTR) -> bool {
+    unsafe {
+        match (a.to_string(), b.to_string()) {
+            (Ok(sa), Ok(sb)) => sa.to_lowercase() == sb.to_lowercase(),
+            _ => false,
+        }
+    }
+}
