@@ -32,6 +32,12 @@ pub struct DebugController {
     condvar: Condvar,
 }
 
+static CONTROLLER: OnceLock<DebugController> = OnceLock::new();
+
+pub fn controller() -> &'static DebugController {
+    CONTROLLER.get_or_init(DebugController::new)
+}
+
 impl DebugController {
     pub fn new() -> Self {
         Self {
@@ -78,10 +84,4 @@ impl DebugController {
         let mut state = self.state.lock().unwrap();
         state.pending_command.take()
     }
-}
-
-static CONTROLLER: OnceLock<DebugController> = OnceLock::new();
-
-pub fn controller() -> &'static DebugController {
-    CONTROLLER.get_or_init(DebugController::new)
 }

@@ -44,14 +44,19 @@ pub fn dap_error(seq: i64, command: &str, message: &str) -> String {
 pub struct BreakpointMode {
     pub mode: String,
     pub label: String,
+    #[serde(rename = "appliesTo")]
     pub applies_to: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct InitializeResponseBody {
+    #[serde(rename = "supportsConfigurationDoneRequest")]
     pub supports_configuration_done_request: bool,
+    #[serde(rename = "supportsFunctionBreakpoints")]
     pub supports_function_breakpoints: bool,
+    #[serde(rename = "supportsModulesRequest")]
     pub supports_modules_request: bool,
+    #[serde(rename = "breakpointModes")]
     pub breakpoint_modes: Vec<BreakpointMode>,
 }
 
@@ -62,5 +67,10 @@ pub struct Breakpoint {
 
 #[derive(Serialize, Deserialize)]
 pub struct SetBreakpointsResponseBody {
+    pub breakpoints: Vec<Breakpoint>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SetFunctionBreakpointsResponseBody {
     pub breakpoints: Vec<Breakpoint>,
 }

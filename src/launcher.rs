@@ -12,6 +12,7 @@ use windows::{
 };
 
 use crate::control::{DebugCommand, StopReason, controller};
+use crate::breakpoints;
 
 // Mist launcher.rs
 // (c) Connor J. Link. All Rights Reserved.
@@ -22,7 +23,7 @@ const EXCEPTION_BREAKPOINT_CODE: NTSTATUS = NTSTATUS(0x8000_0003u32 as i32);
 const EXCEPTION_SINGLE_STEP_CODE: NTSTATUS = NTSTATUS(0x8000_0004u32 as i32);
 
 // IMPORTANT NOTE: compiler and this debugger must be built x64 and debug x86 targets
-type Address = u32;
+type Address = breakpoints::Address;
 
 #[derive(Debug, Clone, Copy)]
 struct SoftwareBreakpoint {
@@ -42,6 +43,8 @@ struct DebugEngine {
     threads: HashMap<u32, HANDLE>,
     breakpoints: HashMap<Address, SoftwareBreakpoint>,
     pending_reinsert: PendingReinsert,
+    hardware_breakpoints: [Option<Address>; 4],
+    hw_generation_seen: u64,
 }
 
 impl DebugEngine {
@@ -51,6 +54,8 @@ impl DebugEngine {
             threads: HashMap::new(),
             breakpoints: HashMap::new(),
             pending_reinsert: PendingReinsert::None,
+            hardware_breakpoints: [None, None, None, None],
+            hw_generation_seen: 0,
         }
     }
 
@@ -179,14 +184,29 @@ impl DebugEngine {
         return Ok(());
     }
 
-    fn get_context(&self, thread: HANDLE) -> Result<WOW64_CONTEXT, String> {
+    fn get_context_flags(
+        &self,
+        thread: HANDLE,
+        flags: WOW64_CONTEXT_FLAGS,
+    ) -> Result<WOW64_CONTEXT, String> {
         let mut context = WOW64_CONTEXT::default();
-        context.ContextFlags = WOW64_CONTEXT_CONTROL;
+        context.ContextFlags = flags;
 
         unsafe { Wow64GetThreadContext(thread, &mut context) }
             .map_err(|e| format!("Wow64GetThreadContext failed: {e}"))?;
 
         return Ok(context);
+    }
+
+    fn get_context(&self, thread: HANDLE) -> Result<WOW64_CONTEXT, String> {
+        self.get_context_flags(thread, WOW64_CONTEXT_CONTROL)
+    }
+
+    fn get_context_with_debug(&self, thread: HANDLE) -> Result<WOW64_CONTEXT, String> {
+        self.get_context_flags(
+            thread,
+            WOW64_CONTEXT_CONTROL | WOW64_CONTEXT_DEBUG_REGISTERS,
+        )
     }
 
     fn set_context(&self, thread: HANDLE, context: &WOW64_CONTEXT) -> Result<(), String> {
@@ -270,10 +290,97 @@ impl DebugEngine {
         let return_addr = self.read_u32(sp)?;
         self.set_breakpoint(return_addr, true)
     }
+
+    fn set_hw_breakpoint_slot(
+        &self,
+        thread: HANDLE,
+        slot: usize,
+        address: Option<Address>,
+    ) -> Result<(), String> {
+        if slot >= 4 {
+            return Err("set_hw_breakpoint_slot: slot out of range".to_string());
+        }
+
+        let mut context = self.get_context_flags(thread, WOW64_CONTEXT_DEBUG_REGISTERS)?;
+
+        let addr = address.unwrap_or(0);
+        match slot {
+            0 => context.Dr0 = addr,
+            1 => context.Dr1 = addr,
+            2 => context.Dr2 = addr,
+            3 => context.Dr3 = addr,
+            _ => {}
+        }
+
+        // DR7 layout (x86):
+        // - local enable bits: L0=bit0, L1=bit2, L2=bit4, L3=bit6
+        // - RW/LEN fields start at bit16, 4 bits per slot; execution break = 00, length = 00.
+        let enable_bit = 1u32 << (slot * 2);
+        if address.is_some() {
+            context.Dr7 |= enable_bit;
+        } else {
+            context.Dr7 &= !enable_bit;
+        }
+
+        // Clear RW/LEN for this slot (force execute, len=1).
+        let rwlen_shift = 16 + (slot * 4);
+        context.Dr7 &= !(0xFu32 << rwlen_shift);
+
+        // Clear status.
+        context.Dr6 = 0;
+
+        unsafe { Wow64SetThreadContext(thread, &context) }
+            .map_err(|e| format!("Wow64SetThreadContext failed: {e}"))?;
+
+        Ok(())
+    }
+
+    fn apply_hw_breakpoints_to_thread(&self, thread: HANDLE) -> Result<(), String> {
+        for (slot, addr) in self.hardware_breakpoints.iter().copied().enumerate() {
+            self.set_hw_breakpoint_slot(thread, slot, addr)?;
+        }
+        Ok(())
+    }
+
+    fn sync_hw_breakpoints_from_registry(&mut self) -> Result<(), String> {
+        let Some(desired) =
+            breakpoints::take_desired_function_breakpoint_addresses(&mut self.hw_generation_seen)
+        else {
+            return Ok(());
+        };
+
+        self.hardware_breakpoints = [None, None, None, None];
+        for (i, addr) in desired.into_iter().enumerate().take(4) {
+            self.hardware_breakpoints[i] = Some(addr);
+        }
+
+        // Apply to every known thread.
+        for (_, thread) in self.threads.iter() {
+            if !thread.is_invalid() {
+                let _ = self.apply_hw_breakpoints_to_thread(*thread);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn is_hw_breakpoint_exception(&self, thread: HANDLE) -> Result<bool, String> {
+        let context = self.get_context_flags(thread, WOW64_CONTEXT_DEBUG_REGISTERS)?;
+        let dr6 = context.Dr6;
+        Ok((dr6 & 0xF) != 0)
+    }
+
+    fn clear_hw_breakpoint_status(&self, thread: HANDLE) -> Result<(), String> {
+        let mut context = self.get_context_flags(thread, WOW64_CONTEXT_DEBUG_REGISTERS)?;
+        context.Dr6 = 0;
+        unsafe { Wow64SetThreadContext(thread, &context) }
+            .map_err(|e| format!("Wow64SetThreadContext failed: {e}"))?;
+        Ok(())
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn launch_target(target_path: *const c_char) {
+pub extern "C" fn mist_launch_target(target_path: *const c_char) {
     if target_path.is_null() {
         eprintln!("launch_target: target_path was null");
         return;
@@ -328,24 +435,38 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
                 break;
             }
 
+            // Keep hardware breakpoints in sync with DAP requests / compiler symbol registration.
+            let _ = engine.sync_hw_breakpoints_from_registry();
+
             let pid = debug_event.dwProcessId;
             let tid = debug_event.dwThreadId;
 
             match debug_event.dwDebugEventCode {
                 CREATE_PROCESS_DEBUG_EVENT => {
+                    // Capture image base for RVA resolution.
+                    let base = debug_event.u.CreateProcessInfo.lpBaseOfImage as usize as u32;
+                    breakpoints::set_image_base(base);
+
                     let file = debug_event.u.CreateProcessInfo.hFile;
                     if !file.is_invalid() {
                         _ = CloseHandle(file);
+                    }
+
+                    // Ensure we apply any already-requested HW breakpoints to the initial thread.
+                    if let Some(thread) = engine.thread_handle(tid) {
+                        let _ = engine.apply_hw_breakpoints_to_thread(thread);
                     }
                 }
                 CREATE_THREAD_DEBUG_EVENT => {
                     let h_thread = debug_event.u.CreateThread.hThread;
                     if !h_thread.is_invalid() {
                         engine.threads.insert(tid, h_thread);
+                        let _ = engine.apply_hw_breakpoints_to_thread(h_thread);
                     } else {
                         if let Ok(opened) = OpenThread(THREAD_ALL_ACCESS, false, tid) {
                             if !opened.is_invalid() {
                                 engine.threads.insert(tid, opened);
+                                let _ = engine.apply_hw_breakpoints_to_thread(opened);
                             }
                         }
                     }
@@ -381,6 +502,7 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
                                 controller().notify_stop(StopReason::Breakpoint, tid);
                                 let command = controller().wait_for_command();
                                 apply_command(&mut engine, tid, command)?;
+                                let _ = engine.sync_hw_breakpoints_from_registry();
                                 _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                                 continue;
                             }
@@ -390,6 +512,7 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
                             controller().notify_stop(StopReason::Breakpoint, tid);
                             let command = controller().wait_for_command();
                             apply_command(&mut engine, tid, command)?;
+                            let _ = engine.sync_hw_breakpoints_from_registry();
                             _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                             continue;
                         }
@@ -409,11 +532,23 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
                                 continue;
                             }
 
+                            // Hardware breakpoints also raise EXCEPTION_SINGLE_STEP.
+                            if engine.is_hw_breakpoint_exception(thread)? {
+                                let _ = engine.clear_hw_breakpoint_status(thread);
+                                controller().notify_stop(StopReason::Breakpoint, tid);
+                                let command = controller().wait_for_command();
+                                apply_command(&mut engine, tid, command)?;
+                                let _ = engine.sync_hw_breakpoints_from_registry();
+                                _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
+                                continue;
+                            }
+
                             // stopping execution after the step and re-issue another debug command
                             _ = engine.clear_trap_flag(thread);
                             controller().notify_stop(StopReason::SingleStep, tid);
                             let command = controller().wait_for_command();
                             apply_command(&mut engine, tid, command)?;
+                            let _ = engine.sync_hw_breakpoints_from_registry();
                             _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                             continue;
                         }

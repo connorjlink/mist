@@ -12,8 +12,6 @@ use windows::{
     core::PCWSTR,
 };
 
-use crate::utilities::*;
-
 // Mist debugger.rs
 // (c) Connor J. Link. All Rights Reserved.
 
@@ -185,6 +183,7 @@ pub fn await_get_thread_id() -> Option<u32> {
         }
     }
 }
+
 
 fn compare_pcwstr_case_insensitive(a: PCWSTR, b: PCWSTR) -> bool {
     unsafe {

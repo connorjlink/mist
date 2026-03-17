@@ -4,5 +4,6 @@
 pub mod dap;
 pub mod control;
 pub mod debugger;
+pub mod breakpoints;
 pub mod launcher;
 pub mod server;

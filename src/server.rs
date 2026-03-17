@@ -11,12 +11,13 @@ use serde_json::Value;
 
 use crate::dap::*;
 use crate::control::{controller, DebugCommand};
+use crate::breakpoints;
 
 // Mist server.rs
 // (c) Connor J. Link. All Rights Reserved.
 
 #[unsafe(no_mangle)]
-pub extern "C" fn initialize(connection_string: *const c_char) {
+pub extern "C" fn mist_initialize(connection_string: *const c_char) {
     // initialize the debugger and start hosting the WebSocket DAP server
     // this is called from C++ compiler .exe
     let address = unsafe { CStr::from_ptr(connection_string) }
@@ -70,7 +71,7 @@ async fn handle_dap_message(req: &Value, state: &SharedState) -> String {
         "initialize" => {
             let body = InitializeResponseBody {
                 supports_configuration_done_request: true,
-                supports_function_breakpoints: false,
+                supports_function_breakpoints: true,
                 supports_modules_request: false,
                 breakpoint_modes: vec![
                     BreakpointMode {
@@ -92,6 +93,24 @@ async fn handle_dap_message(req: &Value, state: &SharedState) -> String {
                 ],
             };
             return dap_success(seq, "initialize", Some(body));
+        }
+        "setFunctionBreakpoints" => {
+            let mut names = Vec::new();
+            if let Some(bps) = req["arguments"]["breakpoints"].as_array() {
+                for bp in bps {
+                    if let Some(name) = bp["name"].as_str() {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+
+            let verified = breakpoints::set_requested_function_breakpoints(names);
+            let breakpoints = verified
+                .into_iter()
+                .map(|verified| Breakpoint { verified })
+                .collect();
+            let body = SetFunctionBreakpointsResponseBody { breakpoints };
+            return dap_success(seq, "setFunctionBreakpoints", Some(body));
         }
         "setBreakpoints" => {
             let mut s = state.lock().await;
