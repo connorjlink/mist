@@ -10,6 +10,7 @@ use futures_util::{StreamExt, SinkExt};
 use serde_json::Value;
 
 use crate::dap::*;
+use crate::control::{controller, DebugCommand};
 
 // Mist server.rs
 // (c) Connor J. Link. All Rights Reserved.
@@ -31,15 +32,15 @@ pub extern "C" fn initialize(connection_string: *const c_char) {
 }
 
 #[derive(Default)]
-struct DebuggerServer {
+struct DebugServer {
     // breakpoints, variables, etc.
     breakpoints: Vec<String>,
 }
 
-type SharedState = Arc<Mutex<DebuggerServer>>;
+type SharedState = Arc<Mutex<DebugServer>>;
 
 async fn start_server(connection_string: &str) {
-    let state = Arc::new(Mutex::new(DebuggerServer::default()));
+    let state = Arc::new(Mutex::new(DebugServer::default()));
     let listener = TcpListener::bind(connection_string).await.unwrap();
 
     while let Ok((stream, _)) = listener.accept().await {
@@ -107,20 +108,21 @@ async fn handle_dap_message(req: &Value, state: &SharedState) -> String {
             let body = SetBreakpointsResponseBody { breakpoints };
             return dap_success(seq, "setBreakpoints", Some(body));
         }
+        "continue" => {
+            controller().submit(DebugCommand::Continue);
+            return dap_success(seq, "continue", None::<()>);
+        }
         "stepIn" => {
-            // TODO: implement stepping logic
-            let mut s = state.lock().await;
-            return dap_success(seq, "stepIn", None);
+            controller().submit(DebugCommand::StepIn);
+            return dap_success(seq, "stepIn", None::<()>);
         }
         "stepOut" => {
-            // TODO: implement stepping logic
-            let mut s = state.lock().await;
-            return dap_success(seq, "stepOut", None);
+            controller().submit(DebugCommand::StepOut);
+            return dap_success(seq, "stepOut", None::<()>);
         }
-        "stepOver" => {
-            // TODO: implement stepping logic
-            let mut s = state.lock().await;
-            return dap_success(seq, "stepOver", None);
+        "next" => {
+            controller().submit(DebugCommand::Next);
+            return dap_success(seq, "next", None::<()>);
         }
         _ => {
             return dap_error(seq, command, "Command not implemented");

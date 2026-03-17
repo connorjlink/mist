@@ -4,7 +4,10 @@ use windows::{
     Win32::{
         Foundation::*,
         System::{
-            Diagnostics::{Debug::*, ToolHelp::*}, ProcessStatus::*, Threading::*, Memory::*
+            Diagnostics::{Debug::*, ToolHelp::*},
+            Memory::*,
+            ProcessStatus::*,
+            Threading::*,
         },
     },
     core::PCWSTR,
@@ -40,11 +43,11 @@ impl Drop for Debugger {
 pub struct DebuggerError(String);
 
 pub fn attach_debugger(name: PCWSTR) -> Result<Debugger, DebuggerError> {
-    let process_handle = attach_to_process(name)
-        .ok_or(DebuggerError(format!("Failed to attach to process")))?;
+    let process_handle =
+        attach_to_process(name).ok_or(DebuggerError(format!("Failed to attach to process")))?;
 
-    let thread_id = await_get_thread_id()
-        .ok_or(DebuggerError(format!("Failed to get thread ID")))?;
+    let thread_id =
+        await_get_thread_id().ok_or(DebuggerError(format!("Failed to get thread ID")))?;
 
     let thread_handle = unsafe { OpenThread(THREAD_ALL_ACCESS, false, thread_id) }
         .map_err(|e| DebuggerError(format!("Failed to open thread: {e}")))?;
@@ -134,24 +137,14 @@ pub fn resolve_image_base(process: HANDLE) -> *mut std::ffi::c_void {
         let mut modules = [HMODULE(null_mut()); 1024];
         let mut bytes = 0u32;
 
-        let modules_result = EnumProcessModules(
-            process,
-            modules.as_mut_ptr(),
-            std::mem::size_of_val(&modules) as u32,
-            &mut bytes,
-        );
-        if modules_result.is_err() {
+        let modules_result = EnumProcessModulesEx(process, modules.as_mut_ptr(), std::mem::size_of_val(&modules) as u32, &mut bytes, LIST_MODULES_32BIT);
+        if modules_result.is_err() || bytes == 0 {
             return null_mut();
         }
 
         let mut mod_info = MODULEINFO::default();
         // always assuming the first module is the main executable
-        let information_result = GetModuleInformation(
-            process,
-            modules[0],
-            &mut mod_info,
-            std::mem::size_of::<MODULEINFO>() as u32,
-        );
+        let information_result = GetModuleInformation(process, modules[0], &mut mod_info, std::mem::size_of::<MODULEINFO>() as u32);
         if information_result.is_err() {
             return null_mut();
         }
@@ -167,11 +160,9 @@ pub fn attach_to_process(name: PCWSTR) -> Option<HANDLE> {
         return None;
     }
 
-    let attach_result = unsafe { 
-        DebugActiveProcess(GetProcessId(process_handle))
-    };
+    let attach_result = unsafe { DebugActiveProcess(GetProcessId(process_handle)) };
     if attach_result.is_err() {
-        unsafe { 
+        unsafe {
             _ = CloseHandle(process_handle);
         };
         return None;
@@ -191,95 +182,12 @@ pub fn await_get_thread_id() -> Option<u32> {
                 return None;
             }
 
-            if debug_event.dwDebugEventCode == EXCEPTION_DEBUG_EVENT &&
-                debug_event.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT {
+            if debug_event.dwDebugEventCode == EXCEPTION_DEBUG_EVENT && 
+               debug_event.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT {
                 return Some(debug_event.dwThreadId);
             }
 
-            _ = ContinueDebugEvent(
-                debug_event.dwProcessId,
-                debug_event.dwThreadId,
-                DBG_CONTINUE,
-            );
+            _ = ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, DBG_CONTINUE);
         }
-    }
-}
-
-/// Use int3 to inject a breakpoint into the target process
-pub fn inject_software_breakpoint_at(relative_virtual_address: u32, original: &mut u8) -> bool {
-    const INT3: u8 = 0xCC;
-
-    unsafe {
-        let image_base = resolve_image_base(GetCurrentProcess());
-        let target_address = (image_base as usize + relative_virtual_address as usize) as *mut u8;
-
-        let mut old = PAGE_PROTECTION_FLAGS::default();
-        if VirtualProtect(target_address as _, 1, PAGE_EXECUTE_READWRITE, &mut old).is_err() {
-            return false;
-        }
-
-        let mut bytes_read = 0usize;
-        if ReadProcessMemory(GetCurrentProcess(), target_address as *const c_void, original as *mut u8 as *mut c_void, 1, Some(&mut bytes_read)).is_err() || bytes_read != 1 {
-            return false;
-        }
-
-        let mut bytes_written = 0usize;
-        if WriteProcessMemory(GetCurrentProcess(), target_address as *mut c_void, &INT3 as *const u8 as *const c_void, 1, Some(&mut bytes_written)).is_err() || bytes_written != 1 {
-            return false;
-        }
-
-        let mut dummy = PAGE_PROTECTION_FLAGS::default();
-        if VirtualProtect(target_address as _, 1, old, &mut dummy).is_err() {
-            return false;
-        }
-
-        // must flush cache to ensure breakpoint is active
-        _ = FlushInstructionCache(GetCurrentProcess(), Some(target_address as *const c_void), 1);
-
-        return true;
-    }
-}
-
-/// Use DR0 and DR7 to inject an x86 hardware breakpoint
-pub fn inject_hardware_breakpoint_at(relative_virtual_address: u32) -> bool {
-    unsafe {
-        let mut context = CONTEXT::default();
-        context.ContextFlags = CONTEXT_DEBUG_REGISTERS_X86;
-        if GetThreadContext(GetCurrentThread(), &mut context).is_err() {
-            return false;
-        }
-
-        let image_base = resolve_image_base(GetCurrentProcess());
-        let target_address = (image_base as usize + relative_virtual_address as usize) as u64;
-
-        context.Dr0 = target_address;
-        // thread local enable for DR0 hardware breakpoint
-        context.Dr7 = (context.Dr7 & !0xF) | 0x1;
-
-        if SetThreadContext(GetCurrentThread(), &context).is_err() {
-            return false;
-        }
-
-        return true;
-    }
-}
-
-/// Enable single-stepping on the target thread handle using the x86 trap flag
-pub fn enable_single_step(thread: HANDLE) -> bool {
-    unsafe {
-        let mut context = CONTEXT::default();
-        context.ContextFlags = CONTEXT_ALL_X86;
-
-        let get_result = GetThreadContext(thread, &mut context);
-        if get_result.is_err() {
-            return false;
-        }
-
-        context.EFlags |= 0x100;
-
-        let set_result = SetThreadContext(thread, &context);
-        _ = ContinueDebugEvent(GetCurrentProcessId(), GetCurrentThreadId(), DBG_CONTINUE);
-        
-        return set_result.is_ok();
     }
 }
