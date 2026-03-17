@@ -312,9 +312,7 @@ impl DebugEngine {
             _ => {}
         }
 
-        // DR7 layout (x86):
-        // - local enable bits: L0=bit0, L1=bit2, L2=bit4, L3=bit6
-        // - RW/LEN fields start at bit16, 4 bits per slot; execution break = 00, length = 00.
+        // set RW/LEN and local enables
         let enable_bit = 1u32 << (slot * 2);
         if address.is_some() {
             context.Dr7 |= enable_bit;
@@ -325,21 +323,20 @@ impl DebugEngine {
         // Clear RW/LEN for this slot (force execute, len=1).
         let rwlen_shift = 16 + (slot * 4);
         context.Dr7 &= !(0xFu32 << rwlen_shift);
-
-        // Clear status.
         context.Dr6 = 0;
 
         unsafe { Wow64SetThreadContext(thread, &context) }
             .map_err(|e| format!("Wow64SetThreadContext failed: {e}"))?;
 
-        Ok(())
+        return Ok(());
     }
 
     fn apply_hw_breakpoints_to_thread(&self, thread: HANDLE) -> Result<(), String> {
         for (slot, addr) in self.hardware_breakpoints.iter().copied().enumerate() {
             self.set_hw_breakpoint_slot(thread, slot, addr)?;
         }
-        Ok(())
+
+        return Ok(());
     }
 
     fn sync_hw_breakpoints_from_registry(&mut self) -> Result<(), String> {
@@ -361,13 +358,13 @@ impl DebugEngine {
             }
         }
 
-        Ok(())
+        return Ok(());
     }
 
     fn is_hw_breakpoint_exception(&self, thread: HANDLE) -> Result<bool, String> {
         let context = self.get_context_flags(thread, WOW64_CONTEXT_DEBUG_REGISTERS)?;
         let dr6 = context.Dr6;
-        Ok((dr6 & 0xF) != 0)
+        return Ok((dr6 & 0xF) != 0);
     }
 
     fn clear_hw_breakpoint_status(&self, thread: HANDLE) -> Result<(), String> {
@@ -375,7 +372,8 @@ impl DebugEngine {
         context.Dr6 = 0;
         unsafe { Wow64SetThreadContext(thread, &context) }
             .map_err(|e| format!("Wow64SetThreadContext failed: {e}"))?;
-        Ok(())
+        
+        return Ok(());
     }
 }
 
@@ -398,7 +396,7 @@ pub extern "C" fn mist_launch_target(target_path: *const c_char) {
 
 fn launch_and_debug(target_path: &str) -> Result<(), String> {
     let app_path = CString::new(target_path)
-        .map_err(|_| "Invalid target path (contains NUL byte)".to_string())?;
+        .map_err(|_| format!("Invalid debugee path: {}", target_path))?;
 
     let mut startup_info = STARTUPINFOA::default();
     startup_info.cb = std::mem::size_of::<STARTUPINFOA>() as u32;
@@ -418,15 +416,13 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
             &mut startup_info,
             &mut process_info,
         )
-        .map_err(|e| format!("CreateProcessA failed: {e}"))?;
+        .map_err(|e| format!("Could not spawn debugee: {e}"))?;
 
         controller().set_session_active(true);
 
         let mut engine = DebugEngine::new();
         engine.process = process_info.hProcess;
-        engine
-            .threads
-            .insert(process_info.dwThreadId, process_info.hThread);
+        engine.threads.insert(process_info.dwThreadId, process_info.hThread);
 
         let mut debug_event = DEBUG_EVENT::default();
 
@@ -436,7 +432,7 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
             }
 
             // Keep hardware breakpoints in sync with DAP requests / compiler symbol registration.
-            let _ = engine.sync_hw_breakpoints_from_registry();
+            _ = engine.sync_hw_breakpoints_from_registry();
 
             let pid = debug_event.dwProcessId;
             let tid = debug_event.dwThreadId;

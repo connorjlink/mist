@@ -55,9 +55,9 @@ async fn handle_connection(stream: tokio::net::TcpStream, state: SharedState) {
     let (mut write, mut read) = ws_stream.split();
 
     while let Some(msg) = read.next().await {
-        let msg = msg.unwrap();
-        if msg.is_text() {
-            let request: Value = serde_json::from_str(msg.to_text().unwrap()).unwrap();
+        let message = msg.unwrap();
+        if message.is_text() {
+            let request: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
             let response = handle_dap_message(&request, &state).await;
             write.send(tokio_tungstenite::tungstenite::Message::Text(response)).await.unwrap();
         }
@@ -66,7 +66,7 @@ async fn handle_connection(stream: tokio::net::TcpStream, state: SharedState) {
 
 async fn handle_dap_message(request: &Value, state: &SharedState) -> String {
     let command = request.get("command").and_then(|c| c.as_str()).unwrap_or("");
-    let seq = request.get("seq").and_then(|s| s.as_i64()).unwrap_or(0);
+    let sequence = request.get("seq").and_then(|s| s.as_i64()).unwrap_or(0);
     match command {
         "initialize" => {
             let body = InitializeResponseBody {
@@ -92,7 +92,7 @@ async fn handle_dap_message(request: &Value, state: &SharedState) -> String {
                     },
                 ],
             };
-            return dap_success(seq, "initialize", Some(body));
+            return dap_success(sequence, "initialize", Some(body));
         }
         "setFunctionBreakpoints" => {
             let mut names = Vec::new();
@@ -110,7 +110,7 @@ async fn handle_dap_message(request: &Value, state: &SharedState) -> String {
                 .map(|verified| Breakpoint { verified })
                 .collect();
             let body = SetFunctionBreakpointsResponseBody { breakpoints };
-            return dap_success(seq, "setFunctionBreakpoints", Some(body));
+            return dap_success(sequence, "setFunctionBreakpoints", Some(body));
         }
         "setBreakpoints" => {
             let mut state = state.lock().await;
@@ -125,26 +125,26 @@ async fn handle_dap_message(request: &Value, state: &SharedState) -> String {
                 }
             }
             let body = SetBreakpointsResponseBody { breakpoints: response };
-            return dap_success(seq, "setBreakpoints", Some(body));
+            return dap_success(sequence, "setBreakpoints", Some(body));
         }
         "continue" => {
             controller().submit(DebugCommand::Continue);
-            return dap_success(seq, "continue", None::<()>);
+            return dap_success(sequence, "continue", None::<()>);
         }
         "stepIn" => {
             controller().submit(DebugCommand::StepIn);
-            return dap_success(seq, "stepIn", None::<()>);
+            return dap_success(sequence, "stepIn", None::<()>);
         }
         "stepOut" => {
             controller().submit(DebugCommand::StepOut);
-            return dap_success(seq, "stepOut", None::<()>);
+            return dap_success(sequence, "stepOut", None::<()>);
         }
         "next" => {
             controller().submit(DebugCommand::Next);
-            return dap_success(seq, "next", None::<()>);
+            return dap_success(sequence, "next", None::<()>);
         }
         _ => {
-            return dap_error(seq, command, "Command not implemented");
+            return dap_error(sequence, command, "Command not implemented");
         }
     }
 }
