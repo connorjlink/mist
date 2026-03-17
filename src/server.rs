@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::dap::*;
 use crate::control::{controller, DebugCommand};
-use crate::breakpoints;
+use crate::breakpoints::*;
 
 // Mist server.rs
 // (c) Connor J. Link. All Rights Reserved.
@@ -57,16 +57,16 @@ async fn handle_connection(stream: tokio::net::TcpStream, state: SharedState) {
     while let Some(msg) = read.next().await {
         let msg = msg.unwrap();
         if msg.is_text() {
-            let req: Value = serde_json::from_str(msg.to_text().unwrap()).unwrap();
-            let resp = handle_dap_message(&req, &state).await;
-            write.send(tokio_tungstenite::tungstenite::Message::Text(resp)).await.unwrap();
+            let request: Value = serde_json::from_str(msg.to_text().unwrap()).unwrap();
+            let response = handle_dap_message(&request, &state).await;
+            write.send(tokio_tungstenite::tungstenite::Message::Text(response)).await.unwrap();
         }
     }
 }
 
-async fn handle_dap_message(req: &Value, state: &SharedState) -> String {
-    let command = req.get("command").and_then(|c| c.as_str()).unwrap_or("");
-    let seq = req.get("seq").and_then(|s| s.as_i64()).unwrap_or(0);
+async fn handle_dap_message(request: &Value, state: &SharedState) -> String {
+    let command = request.get("command").and_then(|c| c.as_str()).unwrap_or("");
+    let seq = request.get("seq").and_then(|s| s.as_i64()).unwrap_or(0);
     match command {
         "initialize" => {
             let body = InitializeResponseBody {
@@ -96,7 +96,7 @@ async fn handle_dap_message(req: &Value, state: &SharedState) -> String {
         }
         "setFunctionBreakpoints" => {
             let mut names = Vec::new();
-            if let Some(bps) = req["arguments"]["breakpoints"].as_array() {
+            if let Some(bps) = request["arguments"]["breakpoints"].as_array() {
                 for bp in bps {
                     if let Some(name) = bp["name"].as_str() {
                         names.push(name.to_string());
@@ -104,7 +104,7 @@ async fn handle_dap_message(req: &Value, state: &SharedState) -> String {
                 }
             }
 
-            let verified = breakpoints::set_requested_function_breakpoints(names);
+            let verified = set_requested_function_breakpoints(names);
             let breakpoints = verified
                 .into_iter()
                 .map(|verified| Breakpoint { verified })
@@ -113,18 +113,18 @@ async fn handle_dap_message(req: &Value, state: &SharedState) -> String {
             return dap_success(seq, "setFunctionBreakpoints", Some(body));
         }
         "setBreakpoints" => {
-            let mut s = state.lock().await;
-            s.breakpoints.clear();
-            let mut breakpoints = Vec::new();
-            if let Some(bps) = req["arguments"]["breakpoints"].as_array() {
-                for bp in bps {
-                    if let Some(line) = bp["line"].as_i64() {
-                        s.breakpoints.push(format!("line: {}", line));
-                        breakpoints.push(Breakpoint { verified: true });
+            let mut state = state.lock().await;
+            state.breakpoints.clear();
+            let mut response = Vec::new();
+            if let Some(breakpoints) = request["arguments"]["breakpoints"].as_array() {
+                for breakpoint in breakpoints {
+                    if let Some(line) = breakpoint["line"].as_i64() {
+                        state.breakpoints.push(format!("line: {}", line));
+                        response.push(Breakpoint { verified: true });
                     }
                 }
             }
-            let body = SetBreakpointsResponseBody { breakpoints };
+            let body = SetBreakpointsResponseBody { breakpoints: response };
             return dap_success(seq, "setBreakpoints", Some(body));
         }
         "continue" => {
