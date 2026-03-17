@@ -6,7 +6,8 @@ use windows::{
         System::{
             Diagnostics::{Debug::*, ToolHelp::*}, ProcessStatus::*, Threading::*, Memory::*
         },
-    }, core::*
+    },
+    core::PCWSTR,
 };
 
 use crate::utilities::*;
@@ -42,9 +43,9 @@ impl Drop for Debugger {
 }
 
 #[derive(Debug)]
-struct DebuggerError(String);
+pub struct DebuggerError(String);
 
-pub fn attach_debugger(name: PCWSTR) -> Result<Debugger, DebuggerError> {
+pub fn attach_debugger(name: PCWSTR) -> std::result::Result<Debugger, DebuggerError> {
     let process_handle = attach_to_process(name)
         .ok_or(DebuggerError(string!("Failed to attach to process")))?;
 
@@ -52,7 +53,7 @@ pub fn attach_debugger(name: PCWSTR) -> Result<Debugger, DebuggerError> {
         .ok_or(DebuggerError(string!("Failed to get thread ID")))?;
 
     let thread_handle = unsafe { OpenThread(THREAD_ALL_ACCESS, false, thread_id) }
-        .or_else(DebuggerError(string!("Failed to open thread")))?;
+        .map_err(|e| DebuggerError(format!("Failed to open thread: {e}")))?;
     if thread_handle.is_invalid() {
         return Err(DebuggerError(string!("Failed to open thread")));
     }

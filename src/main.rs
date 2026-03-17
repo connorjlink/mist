@@ -13,8 +13,9 @@ use windows::{
 };
 
 mod utilities;
-mod tooling;
 mod debugger;
+mod server;
+mod dap;
 
 use utilities::*;
 
@@ -109,7 +110,7 @@ fn main() {
 
         let mut debug_event = DEBUG_EVENT::default();
 
-        // Primary debugging loop
+        // main debugging loop
         loop {
             if WaitForDebugEvent(&mut debug_event, INFINITE).is_ok() {
                 match debug_event.dwDebugEventCode {
@@ -118,7 +119,7 @@ fn main() {
                             debug_event.u.CreateProcessInfo.lpBaseOfImage);
 
                         
-                        // You can read memory or set breakpoints here
+                        // read memory/set breakpoints
                     },
                     EXIT_PROCESS_DEBUG_EVENT => {
                         println!("Process exited");

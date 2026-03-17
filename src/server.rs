@@ -9,7 +9,6 @@ use tokio_tungstenite::accept_async;
 use futures_util::{StreamExt, SinkExt};
 use serde_json::Value;
 
-mod dap;
 use dap::*;
 
 #[unsafe(no_mangle)]
@@ -19,23 +18,23 @@ pub extern "C" fn initialize(connection_string: *const c_char) {
     let address = unsafe { CStr::from_ptr(connection_string).to_str().unwrap() };
 
     thread::spawn(|| {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(async {
+        let runtime = Runtime::new().unwrap();
+        runtime.block_on(async {
             start_server(address).await;
         });
     });
 }
 
 #[derive(Default)]
-struct DebuggerState {
+struct DebuggerServer {
     // breakpoints, variables, etc.
     breakpoints: Vec<String>,
 }
 
-type SharedState = Arc<Mutex<DebuggerState>>;
+type SharedState = Arc<Mutex<DebuggerServer>>;
 
 async fn start_server(connection_string: &str) {
-    let state = Arc::new(Mutex::new(DebuggerState::default()));
+    let state = Arc::new(Mutex::new(DebuggerServer::default()));
     let listener = TcpListener::bind(connection_string).await.unwrap();
 
     while let Ok((stream, _)) = listener.accept().await {
