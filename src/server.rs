@@ -9,18 +9,23 @@ use tokio_tungstenite::accept_async;
 use futures_util::{StreamExt, SinkExt};
 use serde_json::Value;
 
-use dap::*;
+use crate::dap::*;
+
+// Mist server.rs
+// (c) Connor J. Link. All Rights Reserved.
 
 #[unsafe(no_mangle)]
 pub extern "C" fn initialize(connection_string: *const c_char) {
     // initialize the debugger and start hosting the WebSocket DAP server
     // this is called from C++ compiler .exe
-    let address = unsafe { CStr::from_ptr(connection_string).to_str().unwrap() };
+    let address = unsafe { CStr::from_ptr(connection_string) }
+        .to_string_lossy()
+        .into_owned();
 
-    thread::spawn(|| {
+    thread::spawn(move || {
         let runtime = Runtime::new().unwrap();
         runtime.block_on(async {
-            start_server(address).await;
+            start_server(&address).await;
         });
     });
 }
@@ -101,6 +106,21 @@ async fn handle_dap_message(req: &Value, state: &SharedState) -> String {
             }
             let body = SetBreakpointsResponseBody { breakpoints };
             return dap_success(seq, "setBreakpoints", Some(body));
+        }
+        "stepIn" => {
+            // TODO: implement stepping logic
+            let mut s = state.lock().await;
+            return dap_success(seq, "stepIn", None);
+        }
+        "stepOut" => {
+            // TODO: implement stepping logic
+            let mut s = state.lock().await;
+            return dap_success(seq, "stepOut", None);
+        }
+        "stepOver" => {
+            // TODO: implement stepping logic
+            let mut s = state.lock().await;
+            return dap_success(seq, "stepOver", None);
         }
         _ => {
             return dap_error(seq, command, "Command not implemented");

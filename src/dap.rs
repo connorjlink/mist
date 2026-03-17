@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize};
 
-#[allow(non_snake_case)]
+// Mist dap.rs
+// (c) Connor J. Link. All Rights Reserved.
 
 #[derive(Serialize, Deserialize)]
 pub struct DapResponse<T> {

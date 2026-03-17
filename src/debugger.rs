@@ -15,12 +15,6 @@ use crate::utilities::*;
 // Mist debugger.rs
 // (c) Connor J. Link. All Rights Reserved.
 
-macro_rules! string {
-    ($s:expr) => {
-        $s.into()
-    };
-}
-
 pub struct Debugger {
     // debugger information
     toolhelp_snapshot: HANDLE,
@@ -45,22 +39,22 @@ impl Drop for Debugger {
 #[derive(Debug)]
 pub struct DebuggerError(String);
 
-pub fn attach_debugger(name: PCWSTR) -> std::result::Result<Debugger, DebuggerError> {
+pub fn attach_debugger(name: PCWSTR) -> Result<Debugger, DebuggerError> {
     let process_handle = attach_to_process(name)
-        .ok_or(DebuggerError(string!("Failed to attach to process")))?;
+        .ok_or(DebuggerError(format!("Failed to attach to process")))?;
 
     let thread_id = await_get_thread_id()
-        .ok_or(DebuggerError(string!("Failed to get thread ID")))?;
+        .ok_or(DebuggerError(format!("Failed to get thread ID")))?;
 
     let thread_handle = unsafe { OpenThread(THREAD_ALL_ACCESS, false, thread_id) }
         .map_err(|e| DebuggerError(format!("Failed to open thread: {e}")))?;
     if thread_handle.is_invalid() {
-        return Err(DebuggerError(string!("Failed to open thread")));
+        return Err(DebuggerError(format!("Failed to open thread")));
     }
 
     let image_base = resolve_image_base(process_handle);
     if image_base.is_null() {
-        return Err(DebuggerError(string!("Failed to resolve image base")));
+        return Err(DebuggerError(format!("Failed to resolve image base")));
     }
 
     return Ok(Debugger {
