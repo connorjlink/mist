@@ -54,14 +54,14 @@ enum PendingReinsert {
     At(Address),
 }
 
-struct DebugSession {
+struct DebugEngine {
     process: HANDLE,
     threads: HashMap<u32, HANDLE>,
     breakpoints: HashMap<Address, SoftwareBreakpoint>,
     pending_reinsert: PendingReinsert,
 }
 
-impl DebugSession {
+impl DebugEngine {
     fn new() -> Self {
         Self {
             process: HANDLE(null_mut()),
@@ -76,28 +76,27 @@ impl DebugSession {
     }
 
     // TODO: refactor and use only for function-level breakpoints?
-    fn inject_hardware_breakpoint_at(target_address: u32) -> bool {
-        unsafe {
-            let current_process = GetCurrentProcess();
+    // fn inject_hardware_breakpoint_at(target_address: u32) -> bool {
+    //     unsafe {
+    //         let current_process = GetCurrentProcess();
 
-            let mut context = WOW64_CONTEXT::default();
-            context.ContextFlags = WOW64_CONTEXT_DEBUG_REGISTERS;
-            if Wow64GetThreadContext(current_process, &mut context).is_err() {
-                return false;
-            }
+    //         let mut context = WOW64_CONTEXT::default();
+    //         context.ContextFlags = WOW64_CONTEXT_DEBUG_REGISTERS;
+    //         if Wow64GetThreadContext(current_process, &mut context).is_err() {
+    //             return false;
+    //         }
 
-            context.Dr0 = target_address;
-            // thread local enable for DR0 hardware breakpoint
-            context.Dr7 = (context.Dr7 & !0xF) | 0x1;
+    //         context.Dr0 = target_address;
+    //         // thread local enable for DR0 hardware breakpoint
+    //         context.Dr7 = (context.Dr7 & !0xF) | 0x1;
 
-            if Wow64SetThreadContext(current_process, &context).is_err() {
-                return false;
-            }
+    //         if Wow64SetThreadContext(current_process, &context).is_err() {
+    //             return false;
+    //         }
 
-            return true;
-        }
-    }
-
+    //         return true;
+    //     }
+    // }
 
     fn set_breakpoint(&mut self, addr: Address, temporary: bool) -> Result<(), String> {
         if self.process.is_invalid() {
@@ -333,9 +332,9 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
 
         controller().set_session_active(true);
 
-        let mut session = DebugSession::new();
-        session.process = process_info.hProcess;
-        session.threads.insert(process_info.dwThreadId, process_info.hThread);
+        let mut engine = DebugEngine::new();
+        engine.process = process_info.hProcess;
+        engine.threads.insert(process_info.dwThreadId, process_info.hThread);
 
         let mut debug_event = DEBUG_EVENT::default();
 
@@ -357,17 +356,17 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
                 CREATE_THREAD_DEBUG_EVENT => {
                     let h_thread = debug_event.u.CreateThread.hThread;
                     if !h_thread.is_invalid() {
-                        session.threads.insert(tid, h_thread);
+                        engine.threads.insert(tid, h_thread);
                     } else {
                         if let Ok(opened) = OpenThread(THREAD_ALL_ACCESS, false, tid) {
                             if !opened.is_invalid() {
-                                session.threads.insert(tid, opened);
+                                engine.threads.insert(tid, opened);
                             }
                         }
                     }
                 }
                 EXIT_THREAD_DEBUG_EVENT => {
-                    if let Some(h) = session.threads.remove(&tid) {
+                    if let Some(h) = engine.threads.remove(&tid) {
                         if !h.is_invalid() {
                             _ = CloseHandle(h);
                         }
@@ -377,25 +376,25 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
                     let code = debug_event.u.Exception.ExceptionRecord.ExceptionCode;
                     if code == EXCEPTION_BREAKPOINT_CODE {
                         // the thread just hit a registered debugger
-                        if let Some(thread) = session.thread_handle(tid) {
-                            let context = session.get_context(thread)?;
+                        if let Some(thread) = engine.thread_handle(tid) {
+                            let context = engine.get_context(thread)?;
                             let breakpoint_address = get_ip(&context).wrapping_sub(1);
 
-                            if let Some(bp) = session.breakpoints.get(&breakpoint_address).copied() {
+                            if let Some(bp) = engine.breakpoints.get(&breakpoint_address).copied() {
                                 // rewind the instruction pointer
-                                session.clear_breakpoint(breakpoint_address)?;
-                                session.adjust_ip_back_after_int3(thread)?;
+                                engine.clear_breakpoint(breakpoint_address)?;
+                                engine.adjust_ip_back_after_int3(thread)?;
 
                                 if !bp.temporary {
-                                    session.pending_reinsert = PendingReinsert::At(breakpoint_address);
-                                    session.enable_trap_flag(thread)?;
+                                    engine.pending_reinsert = PendingReinsert::At(breakpoint_address);
+                                    engine.enable_trap_flag(thread)?;
                                     _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                                     continue;
                                 }
 
                                 controller().notify_stop(StopReason::Breakpoint, tid);
                                 let command = controller().wait_for_command();
-                                apply_command(&mut session, tid, command)?;
+                                apply_command(&mut engine, tid, command)?;
                                 _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                                 continue;
                             }
@@ -404,20 +403,20 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
                             // probably just an application breakpoint
                             controller().notify_stop(StopReason::Breakpoint, tid);
                             let command = controller().wait_for_command();
-                            apply_command(&mut session, tid, command)?;
+                            apply_command(&mut engine, tid, command)?;
                             _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                             continue;
                         }
                     } else if code == EXCEPTION_SINGLE_STEP_CODE {
-                        if let Some(thread) = session.thread_handle(tid) {
+                        if let Some(thread) = engine.thread_handle(tid) {
                             // reinsert persistent breakpoint and continue
-                            if let PendingReinsert::At(addr) = session.pending_reinsert {
-                                session.pending_reinsert = PendingReinsert::None;
-                                _ = session.clear_trap_flag(thread);
-                                _ = session.reinsert_breakpoint(addr);
+                            if let PendingReinsert::At(addr) = engine.pending_reinsert {
+                                engine.pending_reinsert = PendingReinsert::None;
+                                _ = engine.clear_trap_flag(thread);
+                                _ = engine.reinsert_breakpoint(addr);
 
                                 if let Some(cmd) = controller().try_take_command() {
-                                    apply_command(&mut session, tid, cmd)?;
+                                    apply_command(&mut engine, tid, cmd)?;
                                 }
 
                                 _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
@@ -425,10 +424,10 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
                             }
 
                             // stopping execution after the step and re-issue another debug command
-                            _ = session.clear_trap_flag(thread);
+                            _ = engine.clear_trap_flag(thread);
                             controller().notify_stop(StopReason::SingleStep, tid);
                             let command = controller().wait_for_command();
-                            apply_command(&mut session, tid, command)?;
+                            apply_command(&mut engine, tid, command)?;
                             _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                             continue;
                         }
@@ -446,7 +445,7 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
 
         controller().set_session_active(false);
 
-        for (_, handle) in session.threads.drain() {
+        for (_, handle) in engine.threads.drain() {
             if !handle.is_invalid() {
                 _ = CloseHandle(handle);
             }
@@ -463,15 +462,16 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
     return Ok(());
 }
 
-unsafe fn apply_command(session: &mut DebugSession, thread_id: u32, cmd: DebugCommand) -> Result<(), String> {
-    let Some(thread) = session.thread_handle(thread_id) else {
+unsafe fn apply_command(engine: &mut DebugEngine, thread_id: u32, cmd: DebugCommand) -> Result<(), String> {
+    let Some(thread) = engine.thread_handle(thread_id) else {
         return Err(format!("apply_command: missing thread handle for thread {}", thread_id));
     };
 
     match cmd {
         DebugCommand::Continue => Ok(()),
-        DebugCommand::StepIn => session.step_in(thread),
-        DebugCommand::Next => session.step_over(thread),
-        DebugCommand::StepOut => session.step_out(thread),
+        DebugCommand::StepIn => engine.step_in(thread),
+        DebugCommand::Next => engine.step_over(thread),
+        DebugCommand::StepOut => engine.step_out(thread),
     }
 }
+
