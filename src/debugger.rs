@@ -5,7 +5,6 @@ use windows::{
         Foundation::*,
         System::{
             Diagnostics::{Debug::*, ToolHelp::*},
-            Memory::*,
             ProcessStatus::*,
             Threading::*,
         },
@@ -43,11 +42,11 @@ impl Drop for Debugger {
 pub struct DebuggerError(String);
 
 pub fn attach_debugger(name: PCWSTR) -> Result<Debugger, DebuggerError> {
-    let process_handle =
-        attach_to_process(name).ok_or(DebuggerError(format!("Failed to attach to process")))?;
+    let process_handle = unsafe { attach_to_process(name)
+        .ok_or(DebuggerError(format!("Failed to attach to process: {}", name.to_string().unwrap_or(format!("Unknown")))))? };
 
-    let thread_id =
-        await_get_thread_id().ok_or(DebuggerError(format!("Failed to get thread ID")))?;
+    let thread_id = await_get_thread_id()
+        .ok_or(DebuggerError(format!("Failed to get thread ID")))?;
 
     let thread_handle = unsafe { OpenThread(THREAD_ALL_ACCESS, false, thread_id) }
         .map_err(|e| DebuggerError(format!("Failed to open thread: {e}")))?;
@@ -69,7 +68,6 @@ pub fn attach_debugger(name: PCWSTR) -> Result<Debugger, DebuggerError> {
     });
 }
 
-/// Snapshot a process by handle and resolve thread and module information
 pub fn snapshot_process() -> Option<HANDLE> {
     let toolhelp_snapshot_result = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if toolhelp_snapshot_result.is_err() {
@@ -83,7 +81,6 @@ pub fn snapshot_process() -> Option<HANDLE> {
     return Some(toolhelp_snapshot);
 }
 
-/// Retrieves a handle to a process by its name.
 pub fn get_process_handle(name: PCWSTR, desired_access: u32) -> HANDLE {
     unsafe {
         let snapshot_result = snapshot_process();
@@ -130,7 +127,6 @@ pub fn get_process_handle(name: PCWSTR, desired_access: u32) -> HANDLE {
     }
 }
 
-/// Resolves the executable image base of a process that is already running (after ASLR has applied).
 pub fn resolve_image_base(process: HANDLE) -> *mut std::ffi::c_void {
     unsafe {
         // this is probably overkil, but this function only gets called once per debug attach, so it is probably okay
@@ -153,7 +149,6 @@ pub fn resolve_image_base(process: HANDLE) -> *mut std::ffi::c_void {
     }
 }
 
-/// Attaches the debugger to a running process by its name
 pub fn attach_to_process(name: PCWSTR) -> Option<HANDLE> {
     let process_handle = get_process_handle(name, PROCESS_ALL_ACCESS.0);
     if process_handle.is_invalid() {
@@ -171,7 +166,6 @@ pub fn attach_to_process(name: PCWSTR) -> Option<HANDLE> {
     return Some(process_handle);
 }
 
-/// Loop indefinitely until a thread is spawned within the target process and its triggers a debug event
 pub fn await_get_thread_id() -> Option<u32> {
     unsafe {
         let mut debug_event = DEBUG_EVENT::default();

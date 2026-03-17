@@ -51,9 +51,9 @@ impl DebugController {
         state.is_active
     }
 
-    pub fn submit(&self, cmd: DebugCommand) {
+    pub fn submit(&self, command: DebugCommand) {
         let mut state = self.state.lock().unwrap();
-        state.pending_command = Some(cmd);
+        state.pending_command = Some(command);
         self.condvar.notify_all();
     }
 
@@ -67,8 +67,8 @@ impl DebugController {
     pub fn wait_for_command(&self) -> DebugCommand {
         let mut state = self.state.lock().unwrap();
         loop {
-            if let Some(cmd) = state.pending_command.take() {
-                return cmd;
+            if let Some(command) = state.pending_command.take() {
+                return command;
             }
             state = self.condvar.wait(state).unwrap();
         }

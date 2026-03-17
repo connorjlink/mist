@@ -1,21 +1,17 @@
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_void};
 use std::os::raw::c_char;
-use std::collections::HashMap;
 use std::ptr::null_mut;
 
 use windows::{
     Win32::{
         Foundation::*,
-        System::{
-            Diagnostics::Debug::*,
-            Threading::*,
-            Memory::*,
-        }
+        System::{Diagnostics::Debug::*, Memory::*, Threading::*},
     },
     core::PCSTR,
 };
 
-use crate::control::{controller, DebugCommand, StopReason};
+use crate::control::{DebugCommand, StopReason, controller};
 
 // Mist launcher.rs
 // (c) Connor J. Link. All Rights Reserved.
@@ -27,19 +23,6 @@ const EXCEPTION_SINGLE_STEP_CODE: NTSTATUS = NTSTATUS(0x8000_0004u32 as i32);
 
 // IMPORTANT NOTE: compiler and this debugger must be built x64 and debug x86 targets
 type Address = u32;
-const WOW64_CONTEXT_CONTROL: u32 = 0x0001_0001;
-
-fn get_ip(ctx: &WOW64_CONTEXT) -> Address {
-    ctx.Eip
-}
-
-fn set_ip(ctx: &mut WOW64_CONTEXT, ip: Address) {
-    ctx.Eip = ip;
-}
-
-fn get_sp(ctx: &WOW64_CONTEXT) -> Address {
-    ctx.Esp
-}
 
 #[derive(Debug, Clone, Copy)]
 struct SoftwareBreakpoint {
@@ -198,7 +181,7 @@ impl DebugEngine {
 
     fn get_context(&self, thread: HANDLE) -> Result<WOW64_CONTEXT, String> {
         let mut context = WOW64_CONTEXT::default();
-        context.ContextFlags = WOW64_CONTEXT_FLAGS(WOW64_CONTEXT_CONTROL);
+        context.ContextFlags = WOW64_CONTEXT_CONTROL;
 
         unsafe { Wow64GetThreadContext(thread, &mut context) }
             .map_err(|e| format!("Wow64GetThreadContext failed: {e}"))?;
@@ -206,10 +189,10 @@ impl DebugEngine {
         return Ok(context);
     }
 
-    fn set_context(&self, thread: HANDLE, ctx: &WOW64_CONTEXT) -> Result<(), String> {
-        unsafe { Wow64SetThreadContext(thread, ctx) }
+    fn set_context(&self, thread: HANDLE, context: &WOW64_CONTEXT) -> Result<(), String> {
+        unsafe { Wow64SetThreadContext(thread, context) }
             .map_err(|e| format!("Wow64SetThreadContext failed: {e}"))?;
-        
+
         return Ok(());
     }
 
@@ -227,9 +210,9 @@ impl DebugEngine {
 
     fn adjust_ip_back_after_int3(&self, thread: HANDLE) -> Result<(), String> {
         let mut context = self.get_context(thread)?;
-        let ip = get_ip(&context);
+        let ip = context.Eip;
         if ip > 0 {
-            set_ip(&mut context, ip - 1);
+            context.Eip = ip - 1;
         }
         self.set_context(thread, &context)
     }
@@ -258,7 +241,7 @@ impl DebugEngine {
         if bytes_read != size {
             return Err("ReadProcessMemory: short read".to_string());
         }
-        
+
         return Ok(value);
     }
 
@@ -267,8 +250,8 @@ impl DebugEngine {
     }
 
     fn step_over(&mut self, thread: HANDLE) -> Result<(), String> {
-        let ctx = self.get_context(thread)?;
-        let ip = get_ip(&ctx);
+        let context = self.get_context(thread)?;
+        let ip = context.Eip;
 
         // NOTE: compiler is hardcoded to produce only E8 calls, length 5
         let opcode = self.read_u8(ip)?;
@@ -282,8 +265,8 @@ impl DebugEngine {
     }
 
     fn step_out(&mut self, thread: HANDLE) -> Result<(), String> {
-        let ctx = self.get_context(thread)?;
-        let sp = get_sp(&ctx);
+        let context = self.get_context(thread)?;
+        let sp = context.Esp;
         let return_addr = self.read_u32(sp)?;
         self.set_breakpoint(return_addr, true)
     }
@@ -334,7 +317,9 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
 
         let mut engine = DebugEngine::new();
         engine.process = process_info.hProcess;
-        engine.threads.insert(process_info.dwThreadId, process_info.hThread);
+        engine
+            .threads
+            .insert(process_info.dwThreadId, process_info.hThread);
 
         let mut debug_event = DEBUG_EVENT::default();
 
@@ -378,7 +363,7 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
                         // the thread just hit a registered debugger
                         if let Some(thread) = engine.thread_handle(tid) {
                             let context = engine.get_context(thread)?;
-                            let breakpoint_address = get_ip(&context).wrapping_sub(1);
+                            let breakpoint_address = context.Eip.wrapping_sub(1);
 
                             if let Some(bp) = engine.breakpoints.get(&breakpoint_address).copied() {
                                 // rewind the instruction pointer
@@ -386,7 +371,8 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
                                 engine.adjust_ip_back_after_int3(thread)?;
 
                                 if !bp.temporary {
-                                    engine.pending_reinsert = PendingReinsert::At(breakpoint_address);
+                                    engine.pending_reinsert =
+                                        PendingReinsert::At(breakpoint_address);
                                     engine.enable_trap_flag(thread)?;
                                     _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                                     continue;
@@ -415,8 +401,8 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
                                 _ = engine.clear_trap_flag(thread);
                                 _ = engine.reinsert_breakpoint(addr);
 
-                                if let Some(cmd) = controller().try_take_command() {
-                                    apply_command(&mut engine, tid, cmd)?;
+                                if let Some(command) = controller().try_take_command() {
+                                    apply_command(&mut engine, tid, command)?;
                                 }
 
                                 _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
@@ -462,16 +448,22 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
     return Ok(());
 }
 
-unsafe fn apply_command(engine: &mut DebugEngine, thread_id: u32, cmd: DebugCommand) -> Result<(), String> {
+unsafe fn apply_command(
+    engine: &mut DebugEngine,
+    thread_id: u32,
+    command: DebugCommand,
+) -> Result<(), String> {
     let Some(thread) = engine.thread_handle(thread_id) else {
-        return Err(format!("apply_command: missing thread handle for thread {}", thread_id));
+        return Err(format!(
+            "apply_command: missing thread handle for thread {}",
+            thread_id
+        ));
     };
 
-    match cmd {
+    match command {
         DebugCommand::Continue => Ok(()),
         DebugCommand::StepIn => engine.step_in(thread),
         DebugCommand::Next => engine.step_over(thread),
         DebugCommand::StepOut => engine.step_out(thread),
     }
 }
-
