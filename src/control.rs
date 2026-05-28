@@ -29,45 +29,44 @@ struct ControllerState {
 
 pub struct DebugController {
     state: Mutex<ControllerState>,
-    condvar: Condvar,
+    condition_variable: Condvar,
 }
 
 static CONTROLLER: OnceLock<DebugController> = OnceLock::new();
-
 pub fn controller() -> &'static DebugController {
     CONTROLLER.get_or_init(DebugController::new)
 }
 
 impl DebugController {
     pub fn new() -> Self {
-        Self {
+        return Self {
             state: Mutex::new(ControllerState::default()),
-            condvar: Condvar::new(),
-        }
+            condition_variable: Condvar::new(),
+        };
     }
 
     pub fn set_session_active(&self, active: bool) {
         let mut state = self.state.lock().unwrap();
         state.is_active = active;
-        self.condvar.notify_all();
+        return self.condition_variable.notify_all();
     }
 
     pub fn is_session_active(&self) -> bool {
         let state = self.state.lock().unwrap();
-        state.is_active
+        return state.is_active;
     }
 
     pub fn submit(&self, command: DebugCommand) {
         let mut state = self.state.lock().unwrap();
         state.pending_command = Some(command);
-        self.condvar.notify_all();
+        return self.condition_variable.notify_all();
     }
 
     pub fn notify_stop(&self, reason: StopReason, thread_id: u32) {
         let mut state = self.state.lock().unwrap();
         state.last_stop_reason = Some(reason);
         state.last_stop_thread_id = Some(thread_id);
-        self.condvar.notify_all();
+        return self.condition_variable.notify_all();
     }
 
     pub fn wait_for_command(&self) -> DebugCommand {
@@ -76,12 +75,12 @@ impl DebugController {
             if let Some(command) = state.pending_command.take() {
                 return command;
             }
-            state = self.condvar.wait(state).unwrap();
+            state = self.condition_variable.wait(state).unwrap();
         }
     }
 
     pub fn try_take_command(&self) -> Option<DebugCommand> {
         let mut state = self.state.lock().unwrap();
-        state.pending_command.take()
+        return state.pending_command.take();
     }
 }

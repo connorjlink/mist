@@ -18,7 +18,6 @@ struct BreakpointState {
 }
 
 static STATE: OnceLock<Mutex<BreakpointState>> = OnceLock::new();
-
 fn state() -> &'static Mutex<BreakpointState> {
     STATE.get_or_init(|| Mutex::new(BreakpointState::default()))
 }
@@ -116,9 +115,9 @@ pub fn take_desired_function_breakpoint_addresses(last_seen_generation: &mut u64
     let mut out = Vec::new();
     let mut seen = HashSet::<Address>::new();
     for name in &state.requested_function_breakpoints {
-        if let Some(addr) = resolve_function_address_locked(&state, name) {
-            if seen.insert(addr) {
-                out.push(addr);
+        if let Some(address) = resolve_function_address_locked(&state, name) {
+            if seen.insert(address) {
+                out.push(address);
                 if out.len() == 4 {
                     break;
                 }
@@ -128,11 +127,11 @@ pub fn take_desired_function_breakpoint_addresses(last_seen_generation: &mut u64
     return Some(out);
 }
 
-fn cstr_to_string(ptr: *const c_char) -> Option<String> {
-    if ptr.is_null() {
+fn cstr_to_string(pointer: *const c_char) -> Option<String> {
+    if pointer.is_null() {
         return None;
     }
-    let cstr = unsafe { CStr::from_ptr(ptr) };
+    let cstr = unsafe { CStr::from_ptr(pointer) };
     return Some(cstr.to_string_lossy().into_owned());
 }
 

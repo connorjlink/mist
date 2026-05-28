@@ -49,18 +49,18 @@ struct DebugEngine {
 
 impl DebugEngine {
     fn new() -> Self {
-        Self {
+        return Self {
             process: HANDLE(null_mut()),
             threads: HashMap::new(),
             breakpoints: HashMap::new(),
             pending_reinsert: PendingReinsert::None,
             hardware_breakpoints: [None, None, None, None],
             hw_generation_seen: 0,
-        }
+        };
     }
 
     fn thread_handle(&self, thread_id: u32) -> Option<HANDLE> {
-        self.threads.get(&thread_id).copied()
+        return self.threads.get(&thread_id).copied();
     }
 
     // TODO: refactor and use only for function-level breakpoints?
@@ -86,45 +86,45 @@ impl DebugEngine {
     //     }
     // }
 
-    fn set_breakpoint(&mut self, addr: Address, temporary: bool) -> Result<(), String> {
+    fn set_breakpoint(&mut self, address: Address, temporary: bool) -> Result<(), String> {
         if self.process.is_invalid() {
             return Err("set_breakpoint: no process handle".to_string());
         }
-        if self.breakpoints.contains_key(&addr) {
+        if self.breakpoints.contains_key(&address) {
             return Ok(());
         }
 
         let mut old_protect = PAGE_PROTECTION_FLAGS::default();
-        unsafe { VirtualProtectEx(self.process, addr as usize as *const c_void, 1, PAGE_EXECUTE_READWRITE, &mut old_protect) }
+        unsafe { VirtualProtectEx(self.process, address as usize as *const c_void, 1, PAGE_EXECUTE_READWRITE, &mut old_protect) }
             .map_err(|e| format!("VirtualProtectEx failed: {e}"))?;
 
         let mut original = 0u8;
         let mut bytes_read = 0usize;
-        unsafe { ReadProcessMemory(self.process, addr as usize as *const c_void, &mut original as *mut u8 as *mut c_void, 1, Some(&mut bytes_read)) }
+        unsafe { ReadProcessMemory(self.process, address as usize as *const c_void, &mut original as *mut u8 as *mut c_void, 1, Some(&mut bytes_read)) }
             .map_err(|e| format!("ReadProcessMemory failed: {e}"))?;
         if bytes_read != 1 {
             return Err("ReadProcessMemory: short read".to_string());
         }
 
         let mut bytes_written = 0usize;
-        unsafe { WriteProcessMemory(self.process, addr as usize as *mut c_void, &INT3 as *const u8 as *const c_void, 1, Some(&mut bytes_written)) }
+        unsafe { WriteProcessMemory(self.process, address as usize as *mut c_void, &INT3 as *const u8 as *const c_void, 1, Some(&mut bytes_written)) }
             .map_err(|e| format!("WriteProcessMemory failed: {e}"))?;
         if bytes_written != 1 {
             return Err("WriteProcessMemory: short write".to_string());
         }
 
         let mut dummy = PAGE_PROTECTION_FLAGS::default();
-        unsafe { VirtualProtectEx(self.process, addr as usize as *const c_void, 1, old_protect, &mut dummy) }
+        unsafe { VirtualProtectEx(self.process, address as usize as *const c_void, 1, old_protect, &mut dummy) }
             .map_err(|e| format!("VirtualProtectEx restore failed: {e}"))?;
 
         unsafe {
-            _ = FlushInstructionCache(self.process, Some(addr as usize as *const c_void), 1);
+            _ = FlushInstructionCache(self.process, Some(address as usize as *const c_void), 1);
         }
 
         self.breakpoints.insert(
-            addr,
+            address,
             SoftwareBreakpoint {
-                address: addr,
+                address: address,
                 original,
                 temporary,
             },
@@ -133,52 +133,52 @@ impl DebugEngine {
         return Ok(());
     }
 
-    fn clear_breakpoint(&mut self, addr: Address) -> Result<(), String> {
-        let Some(bp) = self.breakpoints.remove(&addr) else {
+    fn clear_breakpoint(&mut self, address: Address) -> Result<(), String> {
+        let Some(bp) = self.breakpoints.remove(&address) else {
             return Ok(());
         };
 
         let mut old_protect = PAGE_PROTECTION_FLAGS::default();
-        unsafe { VirtualProtectEx(self.process, addr as usize as *const c_void, 1, PAGE_EXECUTE_READWRITE, &mut old_protect) }
+        unsafe { VirtualProtectEx(self.process, address as usize as *const c_void, 1, PAGE_EXECUTE_READWRITE, &mut old_protect) }
             .map_err(|e| format!("VirtualProtectEx failed: {e}"))?;
 
         let mut bytes_written = 0usize;
-        unsafe { WriteProcessMemory(self.process, addr as usize as *mut c_void, &bp.original as *const u8 as *const c_void, 1, Some(&mut bytes_written)) }
+        unsafe { WriteProcessMemory(self.process, address as usize as *mut c_void, &bp.original as *const u8 as *const c_void, 1, Some(&mut bytes_written)) }
             .map_err(|e| format!("WriteProcessMemory failed: {e}"))?;
         if bytes_written != 1 {
             return Err("WriteProcessMemory: short write".to_string());
         }
 
         let mut dummy = PAGE_PROTECTION_FLAGS::default();
-        unsafe { VirtualProtectEx(self.process, addr as usize as *const c_void, 1, old_protect, &mut dummy) }
+        unsafe { VirtualProtectEx(self.process, address as usize as *const c_void, 1, old_protect, &mut dummy) }
             .map_err(|e| format!("VirtualProtectEx restore failed: {e}"))?;
 
         unsafe {
-            _ = FlushInstructionCache(self.process, Some(addr as usize as *const c_void), 1);
+            _ = FlushInstructionCache(self.process, Some(address as usize as *const c_void), 1);
         }
 
         return Ok(());
     }
 
-    fn reinsert_breakpoint(&mut self, addr: Address) -> Result<(), String> {
-        if !self.breakpoints.contains_key(&addr) {
+    fn reinsert_breakpoint(&mut self, address: Address) -> Result<(), String> {
+        if !self.breakpoints.contains_key(&address) {
             return Ok(());
         }
         // restore persistent breakpoint: original byte is already in the map
         let mut old_protect = PAGE_PROTECTION_FLAGS::default();
-        unsafe { VirtualProtectEx(self.process, addr as usize as *const c_void, 1, PAGE_EXECUTE_READWRITE, &mut old_protect) }
+        unsafe { VirtualProtectEx(self.process, address as usize as *const c_void, 1, PAGE_EXECUTE_READWRITE, &mut old_protect) }
             .map_err(|e| format!("VirtualProtectEx failed: {e}"))?;
         
         let mut bytes_written = 0usize;
-        unsafe { WriteProcessMemory(self.process, addr as usize as *mut c_void, &INT3 as *const u8 as *const c_void, 1, Some(&mut bytes_written)) }
+        unsafe { WriteProcessMemory(self.process, address as usize as *mut c_void, &INT3 as *const u8 as *const c_void, 1, Some(&mut bytes_written)) }
             .map_err(|e| format!("WriteProcessMemory failed: {e}"))?;
 
         let mut dummy = PAGE_PROTECTION_FLAGS::default();
-        unsafe { VirtualProtectEx(self.process, addr as usize as *const c_void, 1, old_protect, &mut dummy) }
+        unsafe { VirtualProtectEx(self.process, address as usize as *const c_void, 1, old_protect, &mut dummy) }
             .map_err(|e| format!("VirtualProtectEx restore failed: {e}"))?;
 
         unsafe {
-            _ = FlushInstructionCache(self.process, Some(addr as usize as *const c_void), 1);
+            _ = FlushInstructionCache(self.process, Some(address as usize as *const c_void), 1);
         }
 
         return Ok(());
@@ -199,14 +199,14 @@ impl DebugEngine {
     }
 
     fn get_context(&self, thread: HANDLE) -> Result<WOW64_CONTEXT, String> {
-        self.get_context_flags(thread, WOW64_CONTEXT_CONTROL)
+        return self.get_context_flags(thread, WOW64_CONTEXT_CONTROL);
     }
 
     fn get_context_with_debug(&self, thread: HANDLE) -> Result<WOW64_CONTEXT, String> {
-        self.get_context_flags(
+        return self.get_context_flags(
             thread,
             WOW64_CONTEXT_CONTROL | WOW64_CONTEXT_DEBUG_REGISTERS,
-        )
+        );
     }
 
     fn set_context(&self, thread: HANDLE, context: &WOW64_CONTEXT) -> Result<(), String> {
@@ -219,13 +219,13 @@ impl DebugEngine {
     fn enable_trap_flag(&self, thread: HANDLE) -> Result<(), String> {
         let mut context = self.get_context(thread)?;
         context.EFlags |= 0x100;
-        self.set_context(thread, &context)
+        return self.set_context(thread, &context);
     }
 
     fn clear_trap_flag(&self, thread: HANDLE) -> Result<(), String> {
         let mut context = self.get_context(thread)?;
         context.EFlags &= !0x100;
-        self.set_context(thread, &context)
+        return self.set_context(thread, &context);
     }
 
     fn adjust_ip_back_after_int3(&self, thread: HANDLE) -> Result<(), String> {
@@ -234,14 +234,14 @@ impl DebugEngine {
         if ip > 0 {
             context.Eip = ip - 1;
         }
-        self.set_context(thread, &context)
+        return self.set_context(thread, &context);
     }
 
-    fn read_u8(&self, addr: Address) -> Result<u8, String> {
+    fn read_u8(&self, address: Address) -> Result<u8, String> {
         let mut value = 0u8;
         let mut bytes_read = 0usize;
 
-        unsafe { ReadProcessMemory(self.process, addr as usize as *const c_void, &mut value as *mut u8 as *mut c_void, 1, Some(&mut bytes_read)) }
+        unsafe { ReadProcessMemory(self.process, address as usize as *const c_void, &mut value as *mut u8 as *mut c_void, 1, Some(&mut bytes_read)) }
             .map_err(|e| format!("ReadProcessMemory failed: {e}"))?;
         if bytes_read != 1 {
             return Err("ReadProcessMemory: short read".to_string());
@@ -250,12 +250,12 @@ impl DebugEngine {
         return Ok(value);
     }
 
-    fn read_u32(&self, addr: Address) -> Result<u32, String> {
+    fn read_u32(&self, address: Address) -> Result<u32, String> {
         let mut value: u32 = 0;
         let mut bytes_read = 0usize;
         let size = std::mem::size_of::<u32>();
 
-        unsafe { ReadProcessMemory(self.process, addr as usize as *const c_void, &mut value as *mut u32 as *mut c_void, size, Some(&mut bytes_read)) }
+        unsafe { ReadProcessMemory(self.process, address as usize as *const c_void, &mut value as *mut u32 as *mut c_void, size, Some(&mut bytes_read)) }
             .map_err(|e| format!("ReadProcessMemory failed: {e}"))?;
 
         if bytes_read != size {
@@ -273,7 +273,7 @@ impl DebugEngine {
         let context = self.get_context(thread)?;
         let ip = context.Eip;
 
-        // NOTE: compiler is hardcoded to produce only E8 calls, length 5
+        // NOTE: the Haze compiler is hardcoded to produce only E8 calls, length 5
         let opcode = self.read_u8(ip)?;
         if opcode == 0xE8 {
             let next_ip = ip.wrapping_add(5);
@@ -281,14 +281,14 @@ impl DebugEngine {
             return Ok(());
         }
 
-        self.step_in(thread)
+        return self.step_in(thread);
     }
 
     fn step_out(&mut self, thread: HANDLE) -> Result<(), String> {
         let context = self.get_context(thread)?;
         let sp = context.Esp;
         let return_addr = self.read_u32(sp)?;
-        self.set_breakpoint(return_addr, true)
+        return self.set_breakpoint(return_addr, true);
     }
 
     fn set_hw_breakpoint_slot(
@@ -303,12 +303,12 @@ impl DebugEngine {
 
         let mut context = self.get_context_flags(thread, WOW64_CONTEXT_DEBUG_REGISTERS)?;
 
-        let addr = address.unwrap_or(0);
+        let address = address.unwrap_or(0);
         match slot {
-            0 => context.Dr0 = addr,
-            1 => context.Dr1 = addr,
-            2 => context.Dr2 = addr,
-            3 => context.Dr3 = addr,
+            0 => context.Dr0 = address,
+            1 => context.Dr1 = address,
+            2 => context.Dr2 = address,
+            3 => context.Dr3 = address,
             _ => {}
         }
 
@@ -332,8 +332,8 @@ impl DebugEngine {
     }
 
     fn apply_hw_breakpoints_to_thread(&self, thread: HANDLE) -> Result<(), String> {
-        for (slot, addr) in self.hardware_breakpoints.iter().copied().enumerate() {
-            self.set_hw_breakpoint_slot(thread, slot, addr)?;
+        for (slot, address) in self.hardware_breakpoints.iter().copied().enumerate() {
+            self.set_hw_breakpoint_slot(thread, slot, address)?;
         }
 
         return Ok(());
@@ -347,8 +347,8 @@ impl DebugEngine {
         };
 
         self.hardware_breakpoints = [None, None, None, None];
-        for (i, addr) in desired.into_iter().enumerate().take(4) {
-            self.hardware_breakpoints[i] = Some(addr);
+        for (i, address) in desired.into_iter().enumerate().take(4) {
+            self.hardware_breakpoints[i] = Some(address);
         }
 
         // Apply to every known thread.
@@ -515,10 +515,10 @@ fn launch_and_debug(target_path: &str) -> Result<(), String> {
                     } else if code == EXCEPTION_SINGLE_STEP_CODE {
                         if let Some(thread) = engine.thread_handle(tid) {
                             // reinsert persistent breakpoint and continue
-                            if let PendingReinsert::At(addr) = engine.pending_reinsert {
+                            if let PendingReinsert::At(address) = engine.pending_reinsert {
                                 engine.pending_reinsert = PendingReinsert::None;
                                 _ = engine.clear_trap_flag(thread);
-                                _ = engine.reinsert_breakpoint(addr);
+                                _ = engine.reinsert_breakpoint(address);
 
                                 if let Some(command) = controller().try_take_command() {
                                     apply_command(&mut engine, tid, command)?;

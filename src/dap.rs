@@ -17,7 +17,7 @@ pub struct DapResponse<T> {
 }
 
 pub fn dap_success<T: Serialize>(seq: i64, command: &str, body: Option<T>) -> String {
-    let resp = DapResponse {
+    let response = DapResponse {
         msg_type: "response",
         request_seq: seq,
         success: true,
@@ -25,11 +25,11 @@ pub fn dap_success<T: Serialize>(seq: i64, command: &str, body: Option<T>) -> St
         message: None,
         body,
     };
-    return serde_json::to_string(&resp).unwrap();
+    return serde_json::to_string(&response).unwrap();
 }
 
 pub fn dap_error(seq: i64, command: &str, message: &str) -> String {
-    let resp: DapResponse<()> = DapResponse {
+    let response: DapResponse<()> = DapResponse {
         msg_type: "response",
         request_seq: seq,
         success: false,
@@ -37,7 +37,7 @@ pub fn dap_error(seq: i64, command: &str, message: &str) -> String {
         message: Some(message.to_string()),
         body: None,
     };
-    return serde_json::to_string(&resp).unwrap();
+    return serde_json::to_string(&response).unwrap();
 }
 
 #[derive(Serialize, Deserialize)]
