@@ -124,6 +124,7 @@ pub fn take_desired_function_breakpoint_addresses(last_seen_generation: &mut u64
             }
         }
     }
+
     return Some(out);
 }
 
@@ -131,6 +132,7 @@ fn cstr_to_string(pointer: *const c_char) -> Option<String> {
     if pointer.is_null() {
         return None;
     }
+
     let cstr = unsafe { CStr::from_ptr(pointer) };
     return Some(cstr.to_string_lossy().into_owned());
 }
@@ -140,7 +142,6 @@ pub extern "C" fn mist_clear_function_symbols() {
     clear_function_symbols();
 }
 
-/// Register a function symbol by RVA (relative to the debuggee image base).
 #[unsafe(no_mangle)]
 pub extern "C" fn mist_register_function_symbol_rva(name: *const c_char, rva: Address) {
     let Some(name) = cstr_to_string(name) else {

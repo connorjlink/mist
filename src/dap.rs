@@ -74,3 +74,14 @@ pub struct SetBreakpointsResponseBody {
 pub struct SetFunctionBreakpointsResponseBody {
     pub breakpoints: Vec<Breakpoint>,
 }
+
+#[derive(Debug)]
+pub struct DebuggerError(pub String);
+
+pub type DebuggerResult<T> = Result<T, DebuggerError>;
+
+impl DebuggerError {
+    pub fn to_dap_error(&self, seq: i64, command: &str) -> String {
+        return crate::dap::dap_error(seq, command, &self.0);
+    }
+}

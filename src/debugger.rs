@@ -12,19 +12,10 @@ use windows::{
     core::PCWSTR,
 };
 
+use crate::dap::*;
+
 // Mist debugger.rs
 // (c) Connor J. Link. All Rights Reserved.
-
-#[derive(Debug)]
-pub struct DebuggerError(pub String);
-
-type DebuggerResult<T> = Result<T, DebuggerError>;
-
-impl DebuggerError {
-    pub fn to_dap_error(&self, seq: i64, command: &str) -> String {
-        return crate::dap::dap_error(seq, command, &self.0);
-    }
-}
 
 pub struct Debugger {
     // debugger information
@@ -41,7 +32,7 @@ pub struct Debugger {
 impl Drop for Debugger {
     fn drop(&mut self) {
         if !self.toolhelp_snapshot.is_invalid() {
-            unsafe { CloseHandle(self.toolhelp_snapshot) };
+            unsafe { _ = CloseHandle(self.toolhelp_snapshot) };
         }
     }
 }
@@ -75,14 +66,14 @@ impl Debugger {
         let image_base = Self::resolve_image_base(process_handle)?;
         let toolhelp_snapshot = Self::snapshot_process(process_id)?;
 
-        Ok(Debugger {
+        return Ok(Debugger {
             toolhelp_snapshot,
             process_id: Some(process_id),
             thread_id: Some(thread_id),
             thread_handle: Some(thread_handle),
             process_handle: Some(process_handle),
             image_base: Some(image_base),
-        })
+        });
     }
 
     pub fn get_process_handle(name: PCWSTR, desired_access: u32) -> DebuggerResult<(u32, HANDLE)> {
@@ -94,7 +85,7 @@ impl Debugger {
         };
     
         if unsafe { Process32FirstW(snapshot, &mut entry) }.is_err() {
-            unsafe { CloseHandle(snapshot) };
+            unsafe { _ = CloseHandle(snapshot) };
             return Err(DebuggerError("Process32FirstW failed".to_string()));
         }
     
@@ -110,7 +101,7 @@ impl Debugger {
                         break;
                     }
                     Err(error) => {
-                        unsafe { CloseHandle(snapshot) };
+                        unsafe { _ = CloseHandle(snapshot) };
                         return Err(DebuggerError(format!("Failed to open process: {error}")));
                     }
                 }
@@ -121,13 +112,13 @@ impl Debugger {
             }
         }
     
-        unsafe { CloseHandle(snapshot) };
+        unsafe { _ = CloseHandle(snapshot) };
         
         match result {
-            Some(res) => Ok(res),
+            Some(res) => return Ok(res),
             None => {
                 let name_str = unsafe { name.to_string() }.unwrap_or_else(|_| "Unknown process".to_string());
-                Err(DebuggerError(format!("Failed to find process matching name: {}", name_str)))
+                return Err(DebuggerError(format!("Failed to find process matching name: {}", name_str)));
             }
         }
     }
@@ -159,8 +150,8 @@ impl Debugger {
     
         unsafe { DebugActiveProcess(process_id) }
             .map_err(|e| {
-                unsafe { CloseHandle(process_handle) };
-                DebuggerError(format!("DebugActiveProcess failed: {e}"))
+                unsafe { _ = CloseHandle(process_handle) };
+                return DebuggerError(format!("DebugActiveProcess failed: {e}"));
             })?;
     
         return Ok((process_id, process_handle));
