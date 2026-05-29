@@ -16,6 +16,8 @@ use crate::breakpoints::*;
 // Mist server.rs
 // (c) Connor J. Link. All Rights Reserved.
 
+const DEFAULT_READ_SIZE: i64 = 0x1000;
+
 #[unsafe(no_mangle)]
 pub extern "C" fn mist_initialize(connection_string: *const c_char) {
     // initialize the debugger and start hosting the WebSocket DAP server
@@ -82,6 +84,7 @@ async fn handle_dap_message(request: &Value, state: &SharedState) -> DebuggerRes
                 supports_configuration_done_request: true,
                 supports_function_breakpoints: true,
                 supports_modules_request: false,
+                supports_read_memory_request: true,
                 breakpoint_modes: vec![
                     BreakpointMode {
                         mode: "software".to_string(),
@@ -132,9 +135,19 @@ async fn handle_dap_message(request: &Value, state: &SharedState) -> DebuggerRes
                         response.push(Breakpoint { verified: true });
                     }
                 }
-            }
+            } 
+            // fine to have no breakpoints also to clear existing entries
             let body = SetBreakpointsResponseBody { breakpoints: response };
             return Ok(dap_success(sequence, "setBreakpoints", Some(body)));
+        }
+        "readMemory" => {
+            let address_str = request["arguments"]["offset"].as_str().unwrap_or("");
+            let address = parse_address_literal(address_str)
+                .ok_or_else(|| DebuggerError(format!("Invalid memory address: {}", address_str)))?;
+
+            let count = request["arguments"]["count"].as_i64().unwrap_or(DEFAULT_READ_SIZE);
+            // TODO: finish read memory request
+            return Ok(dap_success(sequence, "readMemory", Some(body)));
         }
         "continue" => {
             controller().submit(DebugCommand::Continue);

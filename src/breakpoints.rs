@@ -57,7 +57,7 @@ pub fn clear_function_symbols() {
     bump_generation(&mut state);
 }
 
-fn parse_address_literal(name: &str) -> Option<Address> {
+pub fn parse_address_literal(name: &str) -> Option<Address> {
     // accept 0x hex or decimal breakpoint addresses
 
     let trimmed = name.trim();

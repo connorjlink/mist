@@ -56,6 +56,8 @@ pub struct InitializeResponseBody {
     pub supports_function_breakpoints: bool,
     #[serde(rename = "supportsModulesRequest")]
     pub supports_modules_request: bool,
+    #[serde(rename = "supportsReadMemoryRequest")]
+    pub supports_read_memory_request: bool,
     #[serde(rename = "breakpointModes")]
     pub breakpoint_modes: Vec<BreakpointMode>,
 }
