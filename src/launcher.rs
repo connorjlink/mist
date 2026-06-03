@@ -315,7 +315,7 @@ impl DebugEngine {
             context.Dr7 &= !enable_bit;
         }
 
-        // clear RW/LEN for this slot (force execute, len=1).
+        // clear RW/LEN for this slot (force execute, len=1)
         let rwlen_shift = 16 + (slot * 4);
         context.Dr7 &= !(0xFu32 << rwlen_shift);
         context.Dr6 = 0;
@@ -426,7 +426,7 @@ fn launch_and_debug(target_path: &str) -> DebuggerResult<()> {
                 break;
             }
 
-            // Keep hardware breakpoints in sync with DAP requests / compiler symbol registration.
+            // synchronize pending breakpoint changes
             _ = engine.sync_hw_breakpoints_from_registry();
 
             let pid = debug_event.dwProcessId;
@@ -434,7 +434,7 @@ fn launch_and_debug(target_path: &str) -> DebuggerResult<()> {
 
             match debug_event.dwDebugEventCode {
                 CREATE_PROCESS_DEBUG_EVENT => {
-                    // Capture image base for RVA resolution.
+                    // capture image base for RVA resolution
                     let base = debug_event.u.CreateProcessInfo.lpBaseOfImage as usize as u32;
                     breakpoints::set_image_base(base);
 
@@ -443,7 +443,7 @@ fn launch_and_debug(target_path: &str) -> DebuggerResult<()> {
                         _ = CloseHandle(file);
                     }
 
-                    // Ensure we apply any already-requested HW breakpoints to the initial thread.
+                    // ensure only requested HW breakpoints to the initial thread
                     if let Some(thread) = engine.thread_handle(tid) {
                         let _ = engine.apply_hw_breakpoints_to_thread(thread);
                     }
@@ -523,7 +523,7 @@ fn launch_and_debug(target_path: &str) -> DebuggerResult<()> {
                                 continue;
                             }
 
-                            // Hardware breakpoints also raise EXCEPTION_SINGLE_STEP.
+                            // hardware breakpoints also raise EXCEPTION_SINGLE_STEP
                             if engine.is_hw_breakpoint_exception(thread)? {
                                 let _ = engine.clear_hw_breakpoint_status(thread);
                                 controller().notify_stop(StopReason::Breakpoint, tid);
@@ -557,6 +557,7 @@ fn launch_and_debug(target_path: &str) -> DebuggerResult<()> {
 
         controller().set_session_active(false);
 
+        // ensure each thread is joined to avoid OS reclamation issues
         for (_, handle) in engine.threads.drain() {
             if !handle.is_invalid() {
                 _ = CloseHandle(handle);
