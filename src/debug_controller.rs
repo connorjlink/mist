@@ -1,13 +1,13 @@
 use std::sync::{Condvar, Mutex, OnceLock};
 
-// Mist control.rs
+// Mist debug_controller.rs
 // (c) Connor J. Link. All Rights Reserved.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugCommand {
     Continue,
     StepIn,
-    Next, // step over
+    StepOver,
     StepOut,
 }
 

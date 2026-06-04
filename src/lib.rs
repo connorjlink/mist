@@ -2,8 +2,8 @@
 // (c) Connor J. Link. All Rights Reserved.
 
 pub mod dap;
-pub mod control;
+pub mod debug_controller;
 pub mod debugger;
-pub mod breakpoints;
-pub mod launcher;
+pub mod breakpoint_state;
+pub mod debug_engine;
 pub mod server;

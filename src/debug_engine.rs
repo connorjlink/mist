@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, c_void};
 use std::os::raw::c_char;
 use std::ptr::null_mut;
+use std::sync::{Mutex, OnceLock};
 
 use windows::{
     Win32::{
@@ -11,20 +12,20 @@ use windows::{
     core::PCSTR,
 };
 
-use crate::control::{DebugCommand, StopReason, controller};
-use crate::breakpoints;
+use crate::debug_controller::{DebugCommand, StopReason, controller};
 use crate::dap::{DebuggerError, DebuggerResult};
 
-// Mist launcher.rs
+// Mist debug_engine.rs
 // (c) Connor J. Link. All Rights Reserved.
+
+// IMPORTANT NOTE: compiler and this debugger must be built x64 and debug x86 targets, thus the following are safe assumptions:
+type Address = u32;
 
 const INT3: u8 = 0xCC;
 
 const EXCEPTION_BREAKPOINT_CODE: NTSTATUS = NTSTATUS(0x8000_0003u32 as i32);
 const EXCEPTION_SINGLE_STEP_CODE: NTSTATUS = NTSTATUS(0x8000_0004u32 as i32);
 
-// IMPORTANT NOTE: compiler and this debugger must be built x64 and debug x86 targets
-type Address = breakpoints::Address;
 
 #[derive(Debug, Clone, Copy)]
 struct SoftwareBreakpoint {
@@ -33,19 +34,45 @@ struct SoftwareBreakpoint {
     temporary: bool,
 }
 
+const DR0: usize = 0;
+const DR1: usize = 1;
+const DR2: usize = 2;
+const DR3: usize = 3;
+
+#[derive(Debug, Clone, Copy)]
+struct HardwareBreakpoint {
+    address: Address,
+    slot: usize
+}
+
+
 #[derive(Debug, Clone, Copy)]
 enum PendingReinsert {
     None,
     At(Address),
 }
 
-struct DebugEngine {
+pub struct DebugEngine {
     process: HANDLE,
     threads: HashMap<u32, HANDLE>,
     breakpoints: HashMap<Address, SoftwareBreakpoint>,
     pending_reinsert: PendingReinsert,
     hardware_breakpoints: [Option<Address>; 4],
+    requested_function_breakpoints: Vec<String>,
+    image_base: Option<Address>,
+    function_symbols_rva: HashMap<String, Address>,
+    function_symbols_va: HashMap<String, Address>,
+    generation: u64,
     hw_generation_seen: u64,
+}
+
+// NOTE: DebugEngine is not thread safe can only submit debug syscalls from the original launching thread
+unsafe impl Send for DebugEngine {}
+unsafe impl Sync for DebugEngine {}
+
+static ENGINE: OnceLock<Mutex<DebugEngine>> = OnceLock::new();
+pub fn engine() -> &'static Mutex<DebugEngine> {
+    ENGINE.get_or_init(|| Mutex::new(DebugEngine::new()))
 }
 
 impl DebugEngine {
@@ -56,8 +83,31 @@ impl DebugEngine {
             breakpoints: HashMap::new(),
             pending_reinsert: PendingReinsert::None,
             hardware_breakpoints: [None, None, None, None],
+            requested_function_breakpoints: Vec::new(),
+            image_base: None,
+            function_symbols_rva: HashMap::new(),
+            function_symbols_va: HashMap::new(),
+            generation: 1,
             hw_generation_seen: 0,
         };
+    }
+
+    fn bump_generation(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        if self.generation == 0 {
+            self.generation = 1;
+        }
+    }
+
+    fn resolve_function_address(&self, name: &str) -> Option<Address> {
+        if let Some(&va) = self.function_symbols_va.get(name) {
+            return Some(va);
+        }
+        if let Some(&rva) = self.function_symbols_rva.get(name) {
+            let base = self.image_base?;
+            return Some(base.wrapping_add(rva));
+        }
+        return Self::parse_address_literal(name);
     }
 
     fn thread_handle(&self, thread_id: u32) -> Option<HANDLE> {
@@ -300,10 +350,10 @@ impl DebugEngine {
 
         let address_or = address.unwrap_or(0);
         match slot {
-            0 => context.Dr0 = address_or,
-            1 => context.Dr1 = address_or,
-            2 => context.Dr2 = address_or,
-            3 => context.Dr3 = address_or,
+            DR0 => context.Dr0 = address_or,
+            DR1 => context.Dr1 = address_or,
+            DR2 => context.Dr2 = address_or,
+            DR3 => context.Dr3 = address_or,
             _ => {}
         }
 
@@ -335,14 +385,26 @@ impl DebugEngine {
     }
 
     fn sync_hw_breakpoints_from_registry(&mut self) -> DebuggerResult<()> {
-        let Some(desired) =
-            breakpoints::take_desired_function_breakpoint_addresses(&mut self.hw_generation_seen)
-        else {
+        if self.generation == self.hw_generation_seen {
             return Ok(());
-        };
+        }
+        self.hw_generation_seen = self.generation;
+
+        let mut out = Vec::new();
+        let mut seen = HashSet::<Address>::new();
+        for name in &self.requested_function_breakpoints {
+            if let Some(address) = self.resolve_function_address(name) {
+                if seen.insert(address) {
+                    out.push(address);
+                    if out.len() == 4 {
+                        break;
+                    }
+                }
+            }
+        }
 
         self.hardware_breakpoints = [None, None, None, None];
-        for (i, address) in desired.into_iter().enumerate().take(4) {
+        for (i, address) in out.into_iter().enumerate().take(4) {
             self.hardware_breakpoints[i] = Some(address);
         }
 
@@ -370,6 +432,54 @@ impl DebugEngine {
         
         return Ok(());
     }
+}
+
+pub fn set_requested_function_breakpoints(names: Vec<String>) -> Vec<bool> {
+    let mut e = engine().lock().unwrap();
+    e.requested_function_breakpoints = names;
+    e.bump_generation();
+
+    return e.requested_function_breakpoints
+        .iter()
+        .map(|name| {
+            e.function_symbols_va.contains_key(name)
+                || e.function_symbols_rva.contains_key(name)
+                || DebugEngine::parse_address_literal(name).is_some()
+        })
+        .collect();
+}
+
+fn cstr_to_string(pointer: *const c_char) -> Option<String> {
+    if pointer.is_null() { return None; }
+    let cstr = unsafe { CStr::from_ptr(pointer) };
+    return Some(cstr.to_string_lossy().into_owned());
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn mist_clear_function_symbols() -> bool {
+    let mut e = engine().lock().unwrap();
+    e.function_symbols_rva.clear();
+    e.function_symbols_va.clear();
+    e.bump_generation();
+    return true;
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn mist_register_function_symbol_rva(name: *const c_char, rva: Address) -> bool {
+    let Some(name) = cstr_to_string(name) else { return false; };
+    let mut e = engine().lock().unwrap();
+    e.function_symbols_rva.insert(name, rva);
+    e.bump_generation();
+    return true;
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn mist_register_function_symbol_va(name: *const c_char, va: Address) -> bool {
+    let Some(name) = cstr_to_string(name) else { return false; };
+    let mut e = engine().lock().unwrap();
+    e.function_symbols_va.insert(name, va);
+    e.bump_generation();
+    return true;
 }
 
 #[unsafe(no_mangle)]
@@ -415,9 +525,11 @@ fn launch_and_debug(target_path: &str) -> DebuggerResult<()> {
 
         controller().set_session_active(true);
 
-        let mut engine = DebugEngine::new();
-        engine.process = process_info.hProcess;
-        engine.threads.insert(process_info.dwThreadId, process_info.hThread);
+        {
+            let mut guard = engine().lock().unwrap();
+            guard.process = process_info.hProcess;
+            guard.threads.insert(process_info.dwThreadId, process_info.hThread);
+        }
 
         let mut debug_event = DEBUG_EVENT::default();
 
@@ -426,44 +538,43 @@ fn launch_and_debug(target_path: &str) -> DebuggerResult<()> {
                 break;
             }
 
-            // synchronize pending breakpoint changes
-            _ = engine.sync_hw_breakpoints_from_registry();
+            let mut e = engine().lock().unwrap();
+            _ = e.sync_hw_breakpoints_from_registry();
 
             let pid = debug_event.dwProcessId;
             let tid = debug_event.dwThreadId;
 
             match debug_event.dwDebugEventCode {
                 CREATE_PROCESS_DEBUG_EVENT => {
-                    // capture image base for RVA resolution
                     let base = debug_event.u.CreateProcessInfo.lpBaseOfImage as usize as u32;
-                    breakpoints::set_image_base(base);
+                    e.image_base = Some(base);
+                    e.bump_generation();
 
                     let file = debug_event.u.CreateProcessInfo.hFile;
                     if !file.is_invalid() {
                         _ = CloseHandle(file);
                     }
 
-                    // ensure only requested HW breakpoints to the initial thread
-                    if let Some(thread) = engine.thread_handle(tid) {
-                        let _ = engine.apply_hw_breakpoints_to_thread(thread);
+                    if let Some(thread) = e.thread_handle(tid) {
+                        let _ = e.apply_hw_breakpoints_to_thread(thread);
                     }
                 }
                 CREATE_THREAD_DEBUG_EVENT => {
                     let h_thread = debug_event.u.CreateThread.hThread;
                     if !h_thread.is_invalid() {
-                        engine.threads.insert(tid, h_thread);
-                        let _ = engine.apply_hw_breakpoints_to_thread(h_thread);
+                        e.threads.insert(tid, h_thread);
+                        let _ = e.apply_hw_breakpoints_to_thread(h_thread);
                     } else {
                         if let Ok(opened) = OpenThread(THREAD_ALL_ACCESS, false, tid) {
                             if !opened.is_invalid() {
-                                engine.threads.insert(tid, opened);
-                                let _ = engine.apply_hw_breakpoints_to_thread(opened);
+                                e.threads.insert(tid, opened);
+                                let _ = e.apply_hw_breakpoints_to_thread(opened);
                             }
                         }
                     }
                 }
                 EXIT_THREAD_DEBUG_EVENT => {
-                    if let Some(h) = engine.threads.remove(&tid) {
+                    if let Some(h) = e.threads.remove(&tid) {
                         if !h.is_invalid() {
                             _ = CloseHandle(h);
                         }
@@ -472,74 +583,80 @@ fn launch_and_debug(target_path: &str) -> DebuggerResult<()> {
                 EXCEPTION_DEBUG_EVENT => {
                     let code = debug_event.u.Exception.ExceptionRecord.ExceptionCode;
                     if code == EXCEPTION_BREAKPOINT_CODE {
-                        // the thread just hit a registered debugger
-                        if let Some(thread) = engine.thread_handle(tid) {
-                            let context = engine.get_context(thread)?;
+                        if let Some(thread) = e.thread_handle(tid) {
+                            let context = e.get_context(thread)?;
                             let breakpoint_address = context.Eip.wrapping_sub(1);
 
-                            if let Some(bp) = engine.breakpoints.get(&breakpoint_address).copied() {
-                                // rewind the instruction pointer
-                                engine.clear_breakpoint(breakpoint_address)?;
-                                engine.adjust_ip_back_after_int3(thread)?;
+                            if let Some(bp) = e.breakpoints.get(&breakpoint_address).copied() {
+                                e.clear_breakpoint(breakpoint_address)?;
+                                e.adjust_ip_back_after_int3(thread)?;
 
                                 if !bp.temporary {
-                                    engine.pending_reinsert =
-                                        PendingReinsert::At(breakpoint_address);
-                                    engine.enable_trap_flag(thread)?;
+                                    e.pending_reinsert = PendingReinsert::At(breakpoint_address);
+                                    e.enable_trap_flag(thread)?;
+                                    drop(e);
                                     _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                                     continue;
                                 }
 
                                 controller().notify_stop(StopReason::Breakpoint, tid);
+                                drop(e);
                                 let command = controller().wait_for_command();
-                                apply_command(&mut engine, tid, command)?;
-                                let _ = engine.sync_hw_breakpoints_from_registry();
+                                e = engine().lock().unwrap();
+                                apply_command(&mut e, tid, command)?;
+                                let _ = e.sync_hw_breakpoints_from_registry();
+                                drop(e);
                                 _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                                 continue;
                             }
 
-                            // unknown, have not encountered this in testing yet...
-                            // probably just an application breakpoint
                             controller().notify_stop(StopReason::Breakpoint, tid);
+                            drop(e);
                             let command = controller().wait_for_command();
-                            apply_command(&mut engine, tid, command)?;
-                            let _ = engine.sync_hw_breakpoints_from_registry();
+                            e = engine().lock().unwrap();
+                            apply_command(&mut e, tid, command)?;
+                            let _ = e.sync_hw_breakpoints_from_registry();
+                            drop(e);
                             _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                             continue;
                         }
                     } else if code == EXCEPTION_SINGLE_STEP_CODE {
-                        if let Some(thread) = engine.thread_handle(tid) {
-                            // reinsert persistent breakpoint and continue
-                            if let PendingReinsert::At(address) = engine.pending_reinsert {
-                                engine.pending_reinsert = PendingReinsert::None;
-                                _ = engine.clear_trap_flag(thread);
-                                _ = engine.reinsert_breakpoint(address);
+                        if let Some(thread) = e.thread_handle(tid) {
+                            if let PendingReinsert::At(address) = e.pending_reinsert {
+                                e.pending_reinsert = PendingReinsert::None;
+                                _ = e.clear_trap_flag(thread);
+                                _ = e.reinsert_breakpoint(address);
 
                                 if let Some(command) = controller().try_take_command() {
-                                    apply_command(&mut engine, tid, command)?;
+                                    apply_command(&mut e, tid, command)?;
                                 }
 
+                                drop(e);
                                 _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                                 continue;
                             }
 
-                            // hardware breakpoints also raise EXCEPTION_SINGLE_STEP
-                            if engine.is_hw_breakpoint_exception(thread)? {
-                                let _ = engine.clear_hw_breakpoint_status(thread);
+                            if e.is_hw_breakpoint_exception(thread)? {
+                                let _ = e.clear_hw_breakpoint_status(thread);
                                 controller().notify_stop(StopReason::Breakpoint, tid);
+                                drop(e);
                                 let command = controller().wait_for_command();
-                                apply_command(&mut engine, tid, command)?;
-                                let _ = engine.sync_hw_breakpoints_from_registry();
+                                e = engine().lock().unwrap();
+                                apply_command(&mut e, tid, command)?;
+                                let _ = e.sync_hw_breakpoints_from_registry();
+                                drop(e);
                                 _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                                 continue;
                             }
 
-                            // stopping execution after the step and re-issue another debug command
-                            _ = engine.clear_trap_flag(thread);
+                            _ = e.clear_trap_flag(thread);
                             controller().notify_stop(StopReason::SingleStep, tid);
+                            drop(e);
                             let command = controller().wait_for_command();
-                            apply_command(&mut engine, tid, command)?;
-                            let _ = engine.sync_hw_breakpoints_from_registry();
+                            e = engine().lock().unwrap();
+                            apply_command(&mut e, tid, command)?;
+                            let _ = e.sync_hw_breakpoints_from_registry();
+                            drop(e);
                             _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
                             continue;
                         }
@@ -552,24 +669,25 @@ fn launch_and_debug(target_path: &str) -> DebuggerResult<()> {
                 _ => {}
             }
 
+            drop(e);
             _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
         }
 
         controller().set_session_active(false);
 
-        // ensure each thread is joined to avoid OS reclamation issues
-        for (_, handle) in engine.threads.drain() {
+        let mut final_guard = engine().lock().unwrap();
+        for (_, handle) in final_guard.threads.drain() {
             if !handle.is_invalid() {
                 _ = CloseHandle(handle);
             }
         }
-
         if !process_info.hThread.is_invalid() {
             _ = CloseHandle(process_info.hThread);
         }
         if !process_info.hProcess.is_invalid() {
             _ = CloseHandle(process_info.hProcess);
         }
+        final_guard.process = HANDLE(null_mut());
     }
 
     return Ok(());
@@ -590,7 +708,19 @@ unsafe fn apply_command(
     match command {
         DebugCommand::Continue => Ok(()),
         DebugCommand::StepIn => engine.step_in(thread),
-        DebugCommand::Next => engine.step_over(thread),
+        DebugCommand::StepOver => engine.step_over(thread),
         DebugCommand::StepOut => engine.step_out(thread),
     }
+}
+
+pub fn parse_address_literal(name: &str) -> Option<Address> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() { return None; }
+    if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+        return Address::from_str_radix(hex, 16).ok();
+    }
+    if trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Address::from_str_radix(trimmed, 16).ok();
+    }
+    return trimmed.parse::<Address>().ok();
 }

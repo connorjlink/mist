@@ -10,8 +10,8 @@ use futures_util::{StreamExt, SinkExt};
 use serde_json::Value;
 
 use crate::dap::*;
-use crate::control::{controller, DebugCommand};
-use crate::breakpoints::*;
+use crate::debug_controller::*;
+use crate::debug_engine::*;
 
 // Mist server.rs
 // (c) Connor J. Link. All Rights Reserved.
@@ -162,7 +162,7 @@ async fn handle_dap_message(request: &Value, state: &SharedState) -> DebuggerRes
             return Ok(dap_success(sequence, "stepOut", None::<()>));
         }
         "next" => {
-            controller().submit(DebugCommand::Next);
+            controller().submit(DebugCommand::StepOver);
             return Ok(dap_success(sequence, "next", None::<()>));
         }
         _ => {
