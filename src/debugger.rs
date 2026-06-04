@@ -173,14 +173,14 @@ impl Debugger {
                 .map_err(|e| DebuggerError(format!("ContinueDebugEvent failed: {e}")))?;
         }
     }
-    
-    fn compare_pcwstr_case_insensitive(a: PCWSTR, b: PCWSTR) -> bool {
-        let a_string = unsafe { a.to_string() };
-        let b_string = unsafe { b.to_string() };
+}
 
-        match (a_string, b_string) {
-            (Ok(ok_a), Ok(ok_b)) => ok_a.to_lowercase() == ok_b.to_lowercase(),
-            _ => false,
-        }
+fn compare_pcwstr_case_insensitive(a: PCWSTR, b: PCWSTR) -> bool {
+    let a_string = unsafe { a.to_string() };
+    let b_string = unsafe { b.to_string() };
+
+    match (a_string, b_string) {
+        (Ok(ok_a), Ok(ok_b)) => ok_a.to_lowercase() == ok_b.to_lowercase(),
+        _ => false,
     }
 }
