@@ -3,7 +3,7 @@
 
 pub mod dap;
 pub mod debug_controller;
-pub mod debugger;
-pub mod breakpoint_state;
 pub mod debug_engine;
+pub mod debugger;
 pub mod server;
+pub mod utility;

@@ -31,6 +31,7 @@ windows = { version = "0.62.2", features = [
 	"Win32_Security",
 	"Win32_Globalization"
 ] }
+base64 = "0.22.1"
 
 [lints.rust]
 dead_code = "allow"

@@ -1,10 +1,11 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 // Mist dap.rs
 // (c) Connor J. Link. All Rights Reserved.
 
 #[derive(Serialize, Deserialize)]
-pub struct DapResponse<T> {
+pub struct DapResponse<T>
+{
     #[serde(rename = "type")]
     msg_type: &'static str,
     request_seq: i64,
@@ -16,7 +17,8 @@ pub struct DapResponse<T> {
     body: Option<T>,
 }
 
-pub fn dap_success<T: Serialize>(seq: i64, command: &str, body: Option<T>) -> String {
+pub fn dap_success<T: Serialize>(seq: i64, command: &str, body: Option<T>) -> String
+{
     let response = DapResponse {
         msg_type: "response",
         request_seq: seq,
@@ -28,7 +30,8 @@ pub fn dap_success<T: Serialize>(seq: i64, command: &str, body: Option<T>) -> St
     return serde_json::to_string(&response).unwrap();
 }
 
-pub fn dap_error(seq: i64, command: &str, message: &str) -> String {
+pub fn dap_error(seq: i64, command: &str, message: &str) -> String
+{
     let response: DapResponse<()> = DapResponse {
         msg_type: "response",
         request_seq: seq,
@@ -41,7 +44,8 @@ pub fn dap_error(seq: i64, command: &str, message: &str) -> String {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct BreakpointMode {
+pub struct BreakpointMode
+{
     pub mode: String,
     pub label: String,
     #[serde(rename = "appliesTo")]
@@ -49,7 +53,8 @@ pub struct BreakpointMode {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct InitializeResponseBody {
+pub struct InitializeResponseBody
+{
     #[serde(rename = "supportsConfigurationDoneRequest")]
     pub supports_configuration_done_request: bool,
     #[serde(rename = "supportsFunctionBreakpoints")]
@@ -63,17 +68,37 @@ pub struct InitializeResponseBody {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct Breakpoint {
+pub struct Breakpoint
+{
     pub verified: bool,
+    pub message: Option<String>,
+    pub source: Option<Source>,
+    pub line: Option<u32>,
+    pub column: Option<u32>,
+    pub end_line: Option<u32>,
+    pub end_column: Option<u32>,
+    pub instruction_reference: Option<String>, // memory address of actual breakpoint
+    pub offset: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SetBreakpointsResponseBody {
+pub struct SetBreakpointsResponseBody
+{
     pub breakpoints: Vec<Breakpoint>,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SetFunctionBreakpointsResponseBody {
+pub struct ReadMemoryResponseBody
+{
+    pub address: String,
+    #[serde(rename = "unreadableBytes")]
+    pub unreadable_bytes: i64,
+    pub data: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SetFunctionBreakpointsResponseBody
+{
     pub breakpoints: Vec<Breakpoint>,
 }
 
@@ -82,8 +107,10 @@ pub struct DebuggerError(pub String);
 
 pub type DebuggerResult<T> = Result<T, DebuggerError>;
 
-impl DebuggerError {
-    pub fn to_dap_error(&self, seq: i64, command: &str) -> String {
+impl DebuggerError
+{
+    pub fn to_dap_error(&self, seq: i64, command: &str) -> String
+    {
         return crate::dap::dap_error(seq, command, &self.0);
     }
 }
