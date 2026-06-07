@@ -67,6 +67,32 @@ pub struct InitializeResponseBody
     pub breakpoint_modes: Vec<BreakpointMode>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ChecksumAlgorithm
+{
+    MD5,
+    SHA1,
+    SHA256,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Checksum
+{
+    pub algorithm: ChecksumAlgorithm,
+    pub checksum: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Source
+{
+    pub name: Option<String>,
+    pub path: Option<String>,
+    // omitting sourceReference and presentationHint for
+    pub origin: Option<String>,
+    pub sources: Option<Vec<Source>>,
+    pub checksums: Option<Vec<Checksum>>,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct Breakpoint
 {
@@ -79,6 +105,15 @@ pub struct Breakpoint
     pub end_column: Option<u32>,
     pub instruction_reference: Option<String>, // memory address of actual breakpoint
     pub offset: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Variable
+{
+    pub name: String,
+    pub value: String,
+    #[serde(rename = "type")]
+    pub r#type: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -105,12 +140,13 @@ pub struct SetFunctionBreakpointsResponseBody
 #[derive(Debug)]
 pub struct DebuggerError(pub String);
 
-pub type DebuggerResult<T> = Result<T, DebuggerError>;
-
 impl DebuggerError
 {
     pub fn to_dap_error(&self, seq: i64, command: &str) -> String
     {
-        return crate::dap::dap_error(seq, command, &self.0);
+        return dap_error(seq, command, &self.0);
     }
 }
+
+pub type DebuggerResult<T> = Result<T, DebuggerError>;
+
