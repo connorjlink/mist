@@ -14,7 +14,7 @@ pub struct DapResponse<T>
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    body: Option<T>,
+    body: Option<T>
 }
 
 pub fn dap_success<T: Serialize>(seq: i64, command: &str, body: Option<T>) -> String
@@ -25,7 +25,7 @@ pub fn dap_success<T: Serialize>(seq: i64, command: &str, body: Option<T>) -> St
         success: true,
         command: command.to_string(),
         message: None,
-        body,
+        body
     };
     return serde_json::to_string(&response).unwrap();
 }
@@ -38,7 +38,7 @@ pub fn dap_error(seq: i64, command: &str, message: &str) -> String
         success: false,
         command: command.to_string(),
         message: Some(message.to_string()),
-        body: None,
+        body: None
     };
     return serde_json::to_string(&response).unwrap();
 }
@@ -49,7 +49,7 @@ pub struct BreakpointMode
     pub mode: String,
     pub label: String,
     #[serde(rename = "appliesTo")]
-    pub applies_to: Vec<String>,
+    pub applies_to: Vec<String>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -64,7 +64,7 @@ pub struct InitializeResponseBody
     #[serde(rename = "supportsReadMemoryRequest")]
     pub supports_read_memory_request: bool,
     #[serde(rename = "breakpointModes")]
-    pub breakpoint_modes: Vec<BreakpointMode>,
+    pub breakpoint_modes: Vec<BreakpointMode>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
@@ -72,14 +72,14 @@ pub enum ChecksumAlgorithm
 {
     MD5,
     SHA1,
-    SHA256,
+    SHA256
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Checksum
 {
     pub algorithm: ChecksumAlgorithm,
-    pub checksum: String,
+    pub checksum: String
 }
 
 #[derive(Serialize, Deserialize)]
@@ -90,7 +90,7 @@ pub struct Source
     // omitting sourceReference and presentationHint for
     pub origin: Option<String>,
     pub sources: Option<Vec<Source>>,
-    pub checksums: Option<Vec<Checksum>>,
+    pub checksums: Option<Vec<Checksum>>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -104,7 +104,7 @@ pub struct Breakpoint
     pub end_line: Option<u32>,
     pub end_column: Option<u32>,
     pub instruction_reference: Option<String>, // memory address of actual breakpoint
-    pub offset: Option<u64>,
+    pub offset: Option<u64>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -113,13 +113,13 @@ pub struct Variable
     pub name: String,
     pub value: String,
     #[serde(rename = "type")]
-    pub r#type: Option<String>,
+    pub r#type: Option<String>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SetBreakpointsResponseBody
 {
-    pub breakpoints: Vec<Breakpoint>,
+    pub breakpoints: Vec<Breakpoint>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -128,13 +128,13 @@ pub struct ReadMemoryResponseBody
     pub address: String,
     #[serde(rename = "unreadableBytes")]
     pub unreadable_bytes: i64,
-    pub data: String,
+    pub data: String
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SetFunctionBreakpointsResponseBody
 {
-    pub breakpoints: Vec<Breakpoint>,
+    pub breakpoints: Vec<Breakpoint>
 }
 
 #[derive(Debug)]
@@ -149,4 +149,3 @@ impl DebuggerError
 }
 
 pub type DebuggerResult<T> = Result<T, DebuggerError>;
-

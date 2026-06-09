@@ -1,15 +1,12 @@
+use std::{os::raw::c_char, thread};
+
+use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
-use std::os::raw::c_char;
-use std::thread;
-use tokio::net::TcpListener;
-use tokio::runtime::Runtime;
+use tokio::{net::TcpListener, runtime::Runtime};
 use tokio_tungstenite::accept_async;
 
-use crate::dap::*;
-use crate::debug_controller::*;
-use crate::debug_engine::*;
-use crate::utility::*;
+use crate::{dap::*, debug_controller::*, debug_engine::*, utility::*};
 
 // Mist server.rs
 // (c) Connor J. Link. All Rights Reserved.
@@ -71,17 +68,17 @@ async fn handle_dap_message(request: &Value) -> DebuggerResult<String>
                     BreakpointMode {
                         mode: "software".to_string(),
                         label: "Software Breakpoint".to_string(),
-                        applies_to: vec!["source".to_string(), "instruction".to_string()],
+                        applies_to: vec!["source".to_string(), "instruction".to_string()]
                     },
                     BreakpointMode {
                         mode: "hardware".to_string(),
                         label: "Hardware Breakpoint".to_string(),
-                        applies_to: vec!["source".to_string(), "instruction".to_string()],
+                        applies_to: vec!["source".to_string(), "instruction".to_string()]
                     },
-                ],
+                ]
             };
             return Ok(dap_success(sequence, "initialize", Some(body)));
-        }
+        },
         "setFunctionBreakpoints" =>
         {
             let mut names = Vec::new();
@@ -97,12 +94,25 @@ async fn handle_dap_message(request: &Value) -> DebuggerResult<String>
             }
 
             let verified = set_requested_function_breakpoints(names);
-            let breakpoints =
-                verified.into_iter().map(|verified| Breakpoint { verified }).collect();
+            // TODO: include proper corresponding breakpoint information in the repsonse
+            let breakpoints = verified
+                .into_iter()
+                .map(|verified| Breakpoint {
+                    verified: verified,
+                    message: None,
+                    source: None,
+                    line: None,
+                    column: None,
+                    end_line: None,
+                    end_column: None,
+                    instruction_reference: None,
+                    offset: None
+                })
+                .collect();
 
             let body = SetFunctionBreakpointsResponseBody { breakpoints };
             return Ok(dap_success(sequence, "setFunctionBreakpoints", Some(body)));
-        }
+        },
         "setBreakpoints" =>
         {
             let mut response = Vec::new();
@@ -111,12 +121,24 @@ async fn handle_dap_message(request: &Value) -> DebuggerResult<String>
                 for breakpoint in breakpoints
                 {
                     // TODO: figure out how to fetch line information
-                    response.push(Breakpoint { verified: false });
+                    // TODO: fire over breakpoint information to the debug engine
+                    // TODO: populate the proper fields in the response based upon breakpoint information
+                    response.push(Breakpoint {
+                        verified: false,
+                        message: None,
+                        source: None,
+                        line: None,
+                        column: None,
+                        end_line: None,
+                        end_column: None,
+                        instruction_reference: None,
+                        offset: None
+                    });
                 }
             }
             let body = SetBreakpointsResponseBody { breakpoints: response };
             return Ok(dap_success(sequence, "setBreakpoints", Some(body)));
-        }
+        },
         "readMemory" =>
         {
             let address_str = request["arguments"]["offset"].as_str().unwrap_or("");
@@ -133,30 +155,30 @@ async fn handle_dap_message(request: &Value) -> DebuggerResult<String>
             let body = ReadMemoryResponseBody {
                 address: format!("0x{:X}", address),
                 unreadable_bytes: 0,
-                data: base64::encode(bytes),
+                data: base64::engine::general_purpose::STANDARD.encode(bytes)
             };
             return Ok(dap_success(sequence, "readMemory", Some(body)));
-        }
+        },
         "continue" =>
         {
             controller().submit(DebugCommand::Continue);
             return Ok(dap_success(sequence, "continue", None::<()>));
-        }
+        },
         "stepIn" =>
         {
             controller().submit(DebugCommand::StepIn);
             return Ok(dap_success(sequence, "stepIn", None::<()>));
-        }
+        },
         "stepOut" =>
         {
             controller().submit(DebugCommand::StepOut);
             return Ok(dap_success(sequence, "stepOut", None::<()>));
-        }
+        },
         "next" =>
         {
             controller().submit(DebugCommand::StepOver);
             return Ok(dap_success(sequence, "next", None::<()>));
-        }
+        },
         _ =>
         {
             return Err(DebuggerError("Command not implemented".to_string()));
@@ -169,12 +191,18 @@ pub extern "C" fn mist_initialize(connection_string: *const c_char) -> bool
 {
     // initialize the debugger and start hosting the WebSocket DAP server
     // this is called from C++ compiler .exe
-    let Some(name) = cstr_to_string(connection_string) else { return false; };
+    let Some(name) = cstr_to_string(connection_string)
+    else
+    {
+        return false;
+    };
+
     thread::spawn(move || {
         let runtime = Runtime::new().unwrap();
         runtime.block_on(async {
             start_server(&name).await;
         });
     });
+
     return true;
 }

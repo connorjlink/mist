@@ -1,19 +1,23 @@
-use std::collections::{HashMap, HashSet};
-use std::os::raw::{c_char, c_void};
-use std::ptr::null_mut;
-use std::sync::{Mutex, OnceLock};
+use std::{
+    collections::{HashMap, HashSet},
+    os::raw::{c_char, c_void},
+    ptr::null_mut,
+    sync::{Mutex, OnceLock}
+};
 
 use windows::{
     Win32::{
         Foundation::*,
-        System::{Diagnostics::Debug::*, Memory::*, Threading::*},
+        System::{Diagnostics::Debug::*, Memory::*, Threading::*}
     },
-    core::PCSTR,
+    core::PCSTR
 };
 
-use crate::dap::{DebuggerError, DebuggerResult};
-use crate::debug_controller::{DebugCommand, StopReason, controller};
-use crate::utility::*;
+use crate::{
+    dap::{DebuggerError, DebuggerResult},
+    debug_controller::{DebugCommand, StopReason, controller},
+    utility::*
+};
 
 // Mist debug_engine.rs
 // (c) Connor J. Link. All Rights Reserved.
@@ -31,7 +35,7 @@ struct SoftwareBreakpoint
 {
     address: Address,
     original: u8,
-    temporary: bool,
+    temporary: bool
 }
 
 const DR0: usize = 0;
@@ -43,14 +47,14 @@ const DR3: usize = 3;
 struct HardwareBreakpoint
 {
     address: Address,
-    slot: usize,
+    slot: usize
 }
 
 #[derive(Debug, Clone, Copy)]
 enum PendingReinsert
 {
     None,
-    At(Address),
+    At(Address)
 }
 
 #[derive(Debug)]
@@ -65,12 +69,16 @@ pub struct DebugEngine
     image_base: Option<Address>,
     function_symbols_rva: HashMap<String, Address>,
     function_symbols_va: HashMap<String, Address>,
-    hardware_breakpoints_dirty: bool,
+    hardware_breakpoints_dirty: bool
 }
 
 // NOTE: DebugEngine is not thread safe can only submit debug syscalls from the original launching thread
-unsafe impl Send for DebugEngine {}
-unsafe impl Sync for DebugEngine {}
+unsafe impl Send for DebugEngine
+{
+}
+unsafe impl Sync for DebugEngine
+{
+}
 
 static ENGINE: OnceLock<Mutex<DebugEngine>> = OnceLock::new();
 pub fn get_engine() -> &'static Mutex<DebugEngine>
@@ -92,7 +100,7 @@ impl DebugEngine
             image_base: None,
             function_symbols_rva: HashMap::new(),
             function_symbols_va: HashMap::new(),
-            hardware_breakpoints_dirty: true,
+            hardware_breakpoints_dirty: true
         };
     }
 
@@ -138,7 +146,7 @@ impl DebugEngine
                 address as usize as *const c_void,
                 1,
                 PAGE_EXECUTE_READWRITE,
-                &mut old_protect,
+                &mut old_protect
             )
         }
         .map_err(|error| DebuggerError(format!("VirtualProtectEx failed: {error}")))?;
@@ -151,7 +159,7 @@ impl DebugEngine
                 address as usize as *const c_void,
                 &mut original as *mut u8 as *mut c_void,
                 1,
-                Some(&mut bytes_read),
+                Some(&mut bytes_read)
             )
         }
         .map_err(|error| DebuggerError(format!("ReadProcessMemory failed: {error}")))?;
@@ -167,7 +175,7 @@ impl DebugEngine
                 address as usize as *mut c_void,
                 &INT3 as *const u8 as *const c_void,
                 1,
-                Some(&mut bytes_written),
+                Some(&mut bytes_written)
             )
         }
         .map_err(|error| DebuggerError(format!("WriteProcessMemory failed: {error}")))?;
@@ -177,23 +185,14 @@ impl DebugEngine
         }
 
         let mut dummy = PAGE_PROTECTION_FLAGS::default();
-        unsafe {
-            VirtualProtectEx(
-                self.process,
-                address as usize as *const c_void,
-                1,
-                old_protect,
-                &mut dummy,
-            )
-        }
-        .map_err(|error| DebuggerError(format!("VirtualProtectEx restore failed: {error}")))?;
+        unsafe { VirtualProtectEx(self.process, address as usize as *const c_void, 1, old_protect, &mut dummy) }
+            .map_err(|error| DebuggerError(format!("VirtualProtectEx restore failed: {error}")))?;
 
         unsafe {
             _ = FlushInstructionCache(self.process, Some(address as usize as *const c_void), 1);
         }
 
-        self.software_breakpoints
-            .insert(address, SoftwareBreakpoint { address: address, original, temporary });
+        self.software_breakpoints.insert(address, SoftwareBreakpoint { address: address, original, temporary });
 
         return Ok(());
     }
@@ -213,7 +212,7 @@ impl DebugEngine
                 address as usize as *const c_void,
                 1,
                 PAGE_EXECUTE_READWRITE,
-                &mut old_protect,
+                &mut old_protect
             )
         }
         .map_err(|error| DebuggerError(format!("VirtualProtectEx failed: {error}")))?;
@@ -225,7 +224,7 @@ impl DebugEngine
                 address as usize as *mut c_void,
                 &breakpoint.original as *const u8 as *const c_void,
                 1,
-                Some(&mut bytes_written),
+                Some(&mut bytes_written)
             )
         }
         .map_err(|error| DebuggerError(format!("WriteProcessMemory failed: {error}")))?;
@@ -235,16 +234,8 @@ impl DebugEngine
         }
 
         let mut dummy = PAGE_PROTECTION_FLAGS::default();
-        unsafe {
-            VirtualProtectEx(
-                self.process,
-                address as usize as *const c_void,
-                1,
-                old_protect,
-                &mut dummy,
-            )
-        }
-        .map_err(|error| DebuggerError(format!("VirtualProtectEx restore failed: {error}")))?;
+        unsafe { VirtualProtectEx(self.process, address as usize as *const c_void, 1, old_protect, &mut dummy) }
+            .map_err(|error| DebuggerError(format!("VirtualProtectEx restore failed: {error}")))?;
 
         unsafe {
             _ = FlushInstructionCache(self.process, Some(address as usize as *const c_void), 1);
@@ -267,7 +258,7 @@ impl DebugEngine
                 address as usize as *const c_void,
                 1,
                 PAGE_EXECUTE_READWRITE,
-                &mut old_protect,
+                &mut old_protect
             )
         }
         .map_err(|error| DebuggerError(format!("VirtualProtectEx failed: {error}")))?;
@@ -279,22 +270,14 @@ impl DebugEngine
                 address as usize as *mut c_void,
                 &INT3 as *const u8 as *const c_void,
                 1,
-                Some(&mut bytes_written),
+                Some(&mut bytes_written)
             )
         }
         .map_err(|error| DebuggerError(format!("WriteProcessMemory failed: {error}")))?;
 
         let mut dummy = PAGE_PROTECTION_FLAGS::default();
-        unsafe {
-            VirtualProtectEx(
-                self.process,
-                address as usize as *const c_void,
-                1,
-                old_protect,
-                &mut dummy,
-            )
-        }
-        .map_err(|error| DebuggerError(format!("VirtualProtectEx restore failed: {error}")))?;
+        unsafe { VirtualProtectEx(self.process, address as usize as *const c_void, 1, old_protect, &mut dummy) }
+            .map_err(|error| DebuggerError(format!("VirtualProtectEx restore failed: {error}")))?;
 
         unsafe {
             _ = FlushInstructionCache(self.process, Some(address as usize as *const c_void), 1);
@@ -303,11 +286,7 @@ impl DebugEngine
         return Ok(());
     }
 
-    fn get_context_flags(
-        &self,
-        thread: HANDLE,
-        flags: WOW64_CONTEXT_FLAGS,
-    ) -> DebuggerResult<WOW64_CONTEXT>
+    fn get_context_flags(&self, thread: HANDLE, flags: WOW64_CONTEXT_FLAGS) -> DebuggerResult<WOW64_CONTEXT>
     {
         let mut context = WOW64_CONTEXT::default();
         context.ContextFlags = flags;
@@ -325,8 +304,7 @@ impl DebugEngine
 
     fn get_context_with_debug(&self, thread: HANDLE) -> DebuggerResult<WOW64_CONTEXT>
     {
-        return self
-            .get_context_flags(thread, WOW64_CONTEXT_CONTROL | WOW64_CONTEXT_DEBUG_REGISTERS);
+        return self.get_context_flags(thread, WOW64_CONTEXT_CONTROL | WOW64_CONTEXT_DEBUG_REGISTERS);
     }
 
     fn set_context(&self, thread: HANDLE, context: &WOW64_CONTEXT) -> DebuggerResult<()>
@@ -373,7 +351,7 @@ impl DebugEngine
                 address as usize as *const c_void,
                 &mut value as *mut u8 as *mut c_void,
                 1,
-                Some(&mut bytes_read),
+                Some(&mut bytes_read)
             )
         }
         .map_err(|error| DebuggerError(format!("ReadProcessMemory failed: {error}")))?;
@@ -397,7 +375,7 @@ impl DebugEngine
                 address as usize as *const c_void,
                 &mut value as *mut u32 as *mut c_void,
                 size,
-                Some(&mut bytes_read),
+                Some(&mut bytes_read)
             )
         }
         .map_err(|error| DebuggerError(format!("ReadProcessMemory failed: {error}")))?;
@@ -440,18 +418,12 @@ impl DebugEngine
         return self.set_breakpoint(return_addr, true);
     }
 
-    fn set_hardware_breakpoint_slot(
-        &self,
-        thread: HANDLE,
-        slot: usize,
-        address: Option<Address>,
-    ) -> DebuggerResult<()>
+    fn set_hardware_breakpoint_slot(&self, thread: HANDLE, slot: usize, address: Option<Address>)
+    -> DebuggerResult<()>
     {
         if slot >= 4
         {
-            return Err(DebuggerError(
-                "set_hardware_breakpoint_slot: slot out of range".to_string(),
-            ));
+            return Err(DebuggerError("set_hardware_breakpoint_slot: slot out of range".to_string()));
         }
 
         let mut context = self.get_context_flags(thread, WOW64_CONTEXT_DEBUG_REGISTERS)?;
@@ -550,9 +522,7 @@ impl DebugEngine
         let to_remove: Vec<Address> = self
             .software_breakpoints
             .iter()
-            .filter(|(address, breakpoint)| {
-                !breakpoint.temporary && !software_addresses.contains(address)
-            })
+            .filter(|(address, breakpoint)| !breakpoint.temporary && !software_addresses.contains(address))
             .map(|(address, _)| *address)
             .collect();
 
@@ -598,9 +568,9 @@ pub fn set_requested_function_breakpoints(names: Vec<String>) -> Vec<bool>
         .requested_function_breakpoints
         .iter()
         .map(|name| {
-            engine.function_symbols_va.contains_key(name)
-                || engine.function_symbols_rva.contains_key(name)
-                || parse_address_literal(name).is_some()
+            engine.function_symbols_va.contains_key(name) ||
+                engine.function_symbols_rva.contains_key(name) ||
+                parse_address_literal(name).is_some()
         })
         .collect();
 }
@@ -617,7 +587,7 @@ pub fn read_memory(address: Address, count: i64) -> DebuggerResult<Vec<u8>>
             address as usize as *const c_void,
             buffer.as_mut_ptr() as *mut c_void,
             count as usize,
-            Some(&mut bytes_read),
+            Some(&mut bytes_read)
         )
     }
     .map_err(|error| DebuggerError(format!("ReadProcessMemory failed: {error}")))?;
@@ -667,21 +637,22 @@ pub extern "C" fn mist_register_function_symbol_va(name: *const c_char, va: Addr
 #[unsafe(no_mangle)]
 pub extern "C" fn mist_launch_target(target_path: *const c_char)
 {
-    if target_path.is_null()
+    let Some(path_string) = cstr_to_string(target_path)
+    else
     {
-        eprintln!("launch_target: target_path was null");
+        eprintln!("launch_target: target_path was not a valid C string");
         return;
-    }
+    };
 
     std::thread::spawn(move || {
-        if let Err(error) = launch_and_debug(target_path)
+        if let Err(error) = launch_and_debug(path_string)
         {
             eprintln!("launch_target: failed because {error:?}");
         }
     });
 }
 
-fn launch_and_debug(target_path: *const c_char) -> DebuggerResult<()>
+fn launch_and_debug(target_path: String) -> DebuggerResult<()>
 {
     let mut startup_info = STARTUPINFOA::default();
     startup_info.cb = std::mem::size_of::<STARTUPINFOA>() as u32;
@@ -690,7 +661,7 @@ fn launch_and_debug(target_path: *const c_char) -> DebuggerResult<()>
 
     unsafe {
         CreateProcessA(
-            PCSTR(target_path),
+            PCSTR(target_path.as_ptr() as *const u8),
             None,
             None,
             None,
@@ -699,7 +670,7 @@ fn launch_and_debug(target_path: *const c_char) -> DebuggerResult<()>
             None,
             None,
             &mut startup_info,
-            &mut process_info,
+            &mut process_info
         )
         .map_err(|error| DebuggerError(format!("Could not spawn debugee: {error}")))?;
 
@@ -744,7 +715,7 @@ fn launch_and_debug(target_path: *const c_char) -> DebuggerResult<()>
                     {
                         engine.apply_hardware_breakpoints_to_thread(thread)?;
                     }
-                }
+                },
                 CREATE_THREAD_DEBUG_EVENT =>
                 {
                     let h_thread = debug_event.u.CreateThread.hThread;
@@ -764,7 +735,7 @@ fn launch_and_debug(target_path: *const c_char) -> DebuggerResult<()>
                             }
                         }
                     }
-                }
+                },
                 EXIT_THREAD_DEBUG_EVENT =>
                 {
                     if let Some(h) = engine.threads.remove(&tid)
@@ -774,7 +745,7 @@ fn launch_and_debug(target_path: *const c_char) -> DebuggerResult<()>
                             _ = CloseHandle(h);
                         }
                     }
-                }
+                },
                 EXCEPTION_DEBUG_EVENT =>
                 {
                     let code = debug_event.u.Exception.ExceptionRecord.ExceptionCode;
@@ -785,16 +756,14 @@ fn launch_and_debug(target_path: *const c_char) -> DebuggerResult<()>
                             let context = engine.get_context(thread)?;
                             let breakpoint_address = context.Eip.wrapping_sub(1);
 
-                            if let Some(breakpoint) =
-                                engine.software_breakpoints.get(&breakpoint_address).copied()
+                            if let Some(breakpoint) = engine.software_breakpoints.get(&breakpoint_address).copied()
                             {
                                 engine.clear_breakpoint(breakpoint_address)?;
                                 engine.adjust_ip_back_after_int3(thread)?;
 
                                 if !breakpoint.temporary
                                 {
-                                    engine.pending_reinsert =
-                                        PendingReinsert::At(breakpoint_address);
+                                    engine.pending_reinsert = PendingReinsert::At(breakpoint_address);
                                     engine.enable_trap_flag(thread)?;
                                     drop(engine);
                                     _ = ContinueDebugEvent(pid, tid, DBG_CONTINUE);
@@ -871,12 +840,12 @@ fn launch_and_debug(target_path: *const c_char) -> DebuggerResult<()>
                             continue;
                         }
                     }
-                }
+                },
                 EXIT_PROCESS_DEBUG_EVENT =>
                 {
                     controller().notify_stop(StopReason::ProcessExit, tid);
                     break;
-                }
+                },
                 _ =>
                 {}
             }
@@ -909,19 +878,12 @@ fn launch_and_debug(target_path: *const c_char) -> DebuggerResult<()>
     return Ok(());
 }
 
-unsafe fn apply_command(
-    engine: &mut DebugEngine,
-    thread_id: u32,
-    command: DebugCommand,
-) -> DebuggerResult<()>
+unsafe fn apply_command(engine: &mut DebugEngine, thread_id: u32, command: DebugCommand) -> DebuggerResult<()>
 {
     let Some(thread) = engine.thread_handle(thread_id)
     else
     {
-        return Err(DebuggerError(format!(
-            "apply_command: missing thread handle for thread {}",
-            thread_id
-        )));
+        return Err(DebuggerError(format!("apply_command: missing thread handle for thread {}", thread_id)));
     };
 
     return match command
@@ -929,7 +891,7 @@ unsafe fn apply_command(
         DebugCommand::Continue => Ok(()),
         DebugCommand::StepIn => engine.step_in(thread),
         DebugCommand::StepOver => engine.step_over(thread),
-        DebugCommand::StepOut => engine.step_out(thread),
+        DebugCommand::StepOut => engine.step_out(thread)
     };
 }
 

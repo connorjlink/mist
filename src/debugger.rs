@@ -1,19 +1,18 @@
-use std::ffi::c_void;
-use std::ptr::null_mut;
+use std::{ffi::c_void, ptr::null_mut};
+
 use windows::{
     Win32::{
         Foundation::*,
         System::{
             Diagnostics::{Debug::*, ToolHelp::*},
             ProcessStatus::*,
-            Threading::*,
-        },
+            Threading::*
+        }
     },
-    core::PCWSTR,
+    core::PCWSTR
 };
 
-use crate::dap::*;
-use crate::utility::*;
+use crate::{dap::*, utility::*};
 
 // Mist debugger.rs
 // (c) Connor J. Link. All Rights Reserved.
@@ -28,7 +27,7 @@ pub struct Debugger
     thread_id: Option<u32>,
     thread_handle: Option<HANDLE>,
     process_handle: Option<HANDLE>,
-    image_base: Option<*mut c_void>,
+    image_base: Option<*mut c_void>
 }
 
 impl Drop for Debugger
@@ -47,8 +46,7 @@ impl Debugger
     pub fn snapshot_process(process_id: u32) -> DebuggerResult<HANDLE>
     {
         // use proper flags to capture modules and threads for the specified process
-        let flags =
-            TH32CS_SNAPPROCESS | TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32 | TH32CS_SNAPTHREAD;
+        let flags = TH32CS_SNAPPROCESS | TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32 | TH32CS_SNAPTHREAD;
 
         let toolhelp_snapshot = unsafe { CreateToolhelp32Snapshot(flags, process_id) }
             .map_err(|error| DebuggerError(format!("CreateToolhelp32Snapshot failed: {error}")))?;
@@ -83,7 +81,7 @@ impl Debugger
             thread_id: Some(thread_id),
             thread_handle: Some(thread_handle),
             process_handle: Some(process_handle),
-            image_base: Some(image_base),
+            image_base: Some(image_base)
         });
     }
 
@@ -91,10 +89,7 @@ impl Debugger
     {
         let snapshot = Self::snapshot_process(0)?;
 
-        let mut entry = PROCESSENTRY32W {
-            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
-            ..Default::default()
-        };
+        let mut entry = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
 
         if unsafe { Process32FirstW(snapshot, &mut entry) }.is_err()
         {
@@ -116,7 +111,7 @@ impl Debugger
                     {
                         result = Some((entry.th32ProcessID, handle));
                         break;
-                    }
+                    },
                     Err(error) =>
                     {
                         unsafe { _ = CloseHandle(snapshot) };
@@ -138,12 +133,8 @@ impl Debugger
             Some(res) => return Ok(res),
             None =>
             {
-                let name_str =
-                    unsafe { name.to_string() }.unwrap_or_else(|_| "Unknown process".to_string());
-                return Err(DebuggerError(format!(
-                    "Failed to find process matching name: {}",
-                    name_str
-                )));
+                let name_str = unsafe { name.to_string() }.unwrap_or_else(|_| "Unknown process".to_string());
+                return Err(DebuggerError(format!("Failed to find process matching name: {}", name_str)));
             }
         }
     }
@@ -159,7 +150,7 @@ impl Debugger
                 modules.as_mut_ptr(),
                 std::mem::size_of_val(&modules) as u32,
                 &mut bytes,
-                LIST_MODULES_32BIT,
+                LIST_MODULES_32BIT
             )
         }
         .map_err(|error| DebuggerError(format!("EnumProcessModulesEx failed: {error}")))?;
@@ -172,12 +163,7 @@ impl Debugger
 
         let mut module_info = MODULEINFO::default();
         unsafe {
-            GetModuleInformation(
-                process,
-                modules[0],
-                &mut module_info,
-                std::mem::size_of::<MODULEINFO>() as u32,
-            )
+            GetModuleInformation(process, modules[0], &mut module_info, std::mem::size_of::<MODULEINFO>() as u32)
         }
         .map_err(|error| DebuggerError(format!("GetModuleInformation failed: {error}")))?;
 
@@ -209,17 +195,14 @@ impl Debugger
             unsafe { WaitForDebugEvent(&mut debug_event, INFINITE) }
                 .map_err(|error| DebuggerError(format!("WaitForDebugEvent failed: {error}")))?;
 
-            if debug_event.dwDebugEventCode == EXCEPTION_DEBUG_EVENT
-                && unsafe { debug_event.u.Exception.ExceptionRecord.ExceptionCode }
-                    == EXCEPTION_BREAKPOINT
+            if debug_event.dwDebugEventCode == EXCEPTION_DEBUG_EVENT &&
+                unsafe { debug_event.u.Exception.ExceptionRecord.ExceptionCode } == EXCEPTION_BREAKPOINT
             {
                 return Ok(debug_event.dwThreadId);
             }
 
-            unsafe {
-                ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, DBG_CONTINUE)
-            }
-            .map_err(|error| DebuggerError(format!("ContinueDebugEvent failed: {error}")))?;
+            unsafe { ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, DBG_CONTINUE) }
+                .map_err(|error| DebuggerError(format!("ContinueDebugEvent failed: {error}")))?;
         }
     }
 }

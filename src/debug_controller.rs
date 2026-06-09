@@ -9,7 +9,7 @@ pub enum DebugCommand
     Continue,
     StepIn,
     StepOver,
-    StepOut,
+    StepOut
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,7 +18,7 @@ pub enum StopReason
     Breakpoint,
     SingleStep,
     ProcessExit,
-    Unknown,
+    Unknown
 }
 
 #[derive(Debug, Default)]
@@ -27,13 +27,13 @@ struct ControllerState
     pending_command: Option<DebugCommand>,
     last_stop_reason: Option<StopReason>,
     last_stop_thread_id: Option<u32>,
-    is_active: bool,
+    is_active: bool
 }
 
 pub struct DebugController
 {
     state: Mutex<ControllerState>,
-    condition_variable: Condvar,
+    condition_variable: Condvar
 }
 
 static CONTROLLER: OnceLock<DebugController> = OnceLock::new();
@@ -46,10 +46,7 @@ impl DebugController
 {
     pub fn new() -> Self
     {
-        return Self {
-            state: Mutex::new(ControllerState::default()),
-            condition_variable: Condvar::new(),
-        };
+        return Self { state: Mutex::new(ControllerState::default()), condition_variable: Condvar::new() };
     }
 
     pub fn set_session_active(&self, active: bool)
